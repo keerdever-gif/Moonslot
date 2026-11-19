@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # obfuscator.py — Luau VM obfuscator
-# CFF + math-code + silent anti-logger + anti-tamper v3 + new anti-env
+# CFF + math-code + silent anti-logger + anti-tamper + new anti-env
 import re, random, argparse, base64
 
 # ─── Lexer ──────────────────────────────────────────────────────────────────
@@ -202,121 +202,102 @@ def obfuscate_string(s, rnd):
 
 # ─── Opcodes ────────────────────────────────────────────────────────────────
 OP_NAMES = [
-    'LOADK','LOADN','STORE','POP',
-    'ADD','SUB','MUL','DIV','MOD',
-    'EQ','NE','LT','LE','GT','GE',
-    'NOT','NEG',
+    'LOADK','LOADN','STORE','POP','ADD','SUB','MUL','DIV','MOD',
+    'EQ','NE','LT','LE','GT','GE','NOT','NEG',
     'CALL','JMP','JMPF','RETURN','HALT',
-    'CHKENV','CHKTRAP','NOP',
-    'AND','OR','JMPT','JMPF_SC',
+    'CHKENV','CHKTRAP','NOP','AND','OR','JMPT','JMPF_SC',
 ]
 ARG_COUNTS = {
     'LOADK':1,'LOADN':1,'STORE':1,'POP':0,
     'ADD':0,'SUB':0,'MUL':0,'DIV':0,'MOD':0,
     'EQ':0,'NE':0,'LT':0,'LE':0,'GT':0,'GE':0,
-    'NOT':0,'NEG':0,
-    'CALL':2,'JMP':1,'JMPF':1,'RETURN':1,'HALT':0,
-    'CHKENV':1,'CHKTRAP':1,'NOP':0,
-    'AND':0,'OR':0,'JMPT':1,'JMPF_SC':1,
+    'NOT':0,'NEG':0,'CALL':2,'JMP':1,'JMPF':1,'RETURN':1,'HALT':0,
+    'CHKENV':1,'CHKTRAP':1,'NOP':0,'AND':0,'OR':0,'JMPT':1,'JMPF_SC':1,
 }
 
 # ─── Compiler ───────────────────────────────────────────────────────────────
 class Compiler:
     def __init__(s, seed):
-        s.seed = seed
-        rnd = random.Random(seed)
-        s.rnd = rnd
-        s.op_id = {}
-        ids = list(range(1, 250))
-        rnd.shuffle(ids)
-        for i, name in enumerate(OP_NAMES):
-            s.op_id[name] = ids[i]
-        s.consts = []
-        s.const_idx = {}
-        s.instrs = []
+        s.seed=seed; rnd=random.Random(seed); s.rnd=rnd
+        s.op_id={}; ids=list(range(1,250)); rnd.shuffle(ids)
+        for i,name in enumerate(OP_NAMES): s.op_id[name]=ids[i]
+        s.consts=[]; s.const_idx={}; s.instrs=[]
 
     def const(s, val):
         if isinstance(val, str):
-            payload, key = obfuscate_string(val, s.rnd)
-            key_repr = '{' + ','.join(str(k) for k in key) + '}'
-            return s.const_raw(('__STR_DEC__', payload, key_repr))
-        key = repr(val)
+            payload,key=obfuscate_string(val,s.rnd)
+            key_repr='{'+','.join(str(k) for k in key)+'}'
+            return s.const_raw(('__STR_DEC__',payload,key_repr))
+        key=repr(val)
         if key in s.const_idx: return s.const_idx[key]
-        idx = len(s.consts)
-        s.consts.append(val)
-        s.const_idx[key] = idx
-        return idx
+        idx=len(s.consts); s.consts.append(val); s.const_idx[key]=idx; return idx
 
     def const_raw(s, val):
-        key = repr(val)
+        key=repr(val)
         if key in s.const_idx: return s.const_idx[key]
-        idx = len(s.consts)
-        s.consts.append(val)
-        s.const_idx[key] = idx
-        return idx
+        idx=len(s.consts); s.consts.append(val); s.const_idx[key]=idx; return idx
 
     def emit(s, name, *args):
         s.instrs.append(s.op_id[name])
         for a in args: s.instrs.append(a & 0xFF)
 
     def emit_math_const(s, n):
-        rnd = s.rnd
-        if not isinstance(n, int) or abs(n) >= 100000:
+        rnd=s.rnd
+        if not isinstance(n,int) or abs(n)>=100000:
             s.emit('LOADK', s.const(n)); return
-        if n == 0:
-            a = rnd.randint(1, 500)
-            s.emit('LOADK', s.const(a)); s.emit('LOADK', s.const(a)); s.emit('SUB'); return
-        v = rnd.randint(0, 3)
-        if v == 0:
-            a = rnd.randint(-999, 999)
-            s.emit('LOADK', s.const(n + a)); s.emit('LOADK', s.const(a)); s.emit('SUB')
-        elif v == 1:
-            f = rnd.randint(2, 50)
-            s.emit('LOADK', s.const(n * f)); s.emit('LOADK', s.const(f)); s.emit('DIV')
-        elif v == 2:
-            a = rnd.randint(-999, 999); b = rnd.randint(-999, 999)
-            s.emit('LOADK', s.const(n + a)); s.emit('LOADK', s.const(a)); s.emit('SUB')
-            s.emit('LOADK', s.const(b)); s.emit('LOADK', s.const(b)); s.emit('SUB')
-            s.emit('ADD')
+        if n==0:
+            a=rnd.randint(1,500)
+            s.emit('LOADK',s.const(a)); s.emit('LOADK',s.const(a)); s.emit('SUB'); return
+        v=rnd.randint(0,3)
+        if v==0:
+            a=rnd.randint(-999,999)
+            s.emit('LOADK',s.const(n+a)); s.emit('LOADK',s.const(a)); s.emit('SUB')
+        elif v==1:
+            f=rnd.randint(2,50)
+            s.emit('LOADK',s.const(n*f)); s.emit('LOADK',s.const(f)); s.emit('DIV')
+        elif v==2:
+            a=rnd.randint(-999,999); b=rnd.randint(-999,999)
+            s.emit('LOADK',s.const(n+a)); s.emit('LOADK',s.const(a)); s.emit('SUB')
+            s.emit('LOADK',s.const(b)); s.emit('LOADK',s.const(b)); s.emit('SUB'); s.emit('ADD')
         else:
-            m = rnd.randint(2, 20); q, r = divmod(n, m)
-            s.emit('LOADK', s.const(q)); s.emit('LOADK', s.const(m)); s.emit('MUL')
-            s.emit('LOADK', s.const(r)); s.emit('ADD')
+            m=rnd.randint(2,20); q,r=divmod(n,m)
+            s.emit('LOADK',s.const(q)); s.emit('LOADK',s.const(m)); s.emit('MUL')
+            s.emit('LOADK',s.const(r)); s.emit('ADD')
 
     def emit_math_float(s, f):
-        a = 1 << s.rnd.randint(2, 10)
-        s.emit('LOADK', s.const(f * a)); s.emit('LOADK', s.const(a)); s.emit('DIV')
+        a=1<<s.rnd.randint(2,10)
+        s.emit('LOADK',s.const(f*a)); s.emit('LOADK',s.const(a)); s.emit('DIV')
 
     def compile_block(s, block):
         for st in block.stmts: s.compile_stmt(st)
 
     def compile_stmt(s, st):
         if isinstance(st, Local):
-            for i, v in enumerate(st.vals):
+            for i,v in enumerate(st.vals):
                 s.compile_expr(v); s.emit('STORE', s.const(st.names[i]))
             for n in st.names[len(st.vals):]:
                 s.emit('LOADK', s.const(None)); s.emit('STORE', s.const(n))
         elif isinstance(st, Assign):
-            for i, v in enumerate(st.vals):
+            for i,v in enumerate(st.vals):
                 s.compile_expr(v); s.emit('STORE', s.const(st.names[i]))
         elif isinstance(st, If):
             s.compile_expr(st.cond)
-            jmp_else = len(s.instrs); s.emit('JMPF', 0)
+            jmp_else=len(s.instrs); s.emit('JMPF', 0)
             s.compile_block(st.body)
             if st.orelse.stmts:
-                jmp_end = len(s.instrs); s.emit('JMP', 0)
-                s.instrs[jmp_else+1] = len(s.instrs)
+                jmp_end=len(s.instrs); s.emit('JMP', 0)
+                s.instrs[jmp_else+1]=len(s.instrs)
                 s.compile_block(st.orelse)
-                s.instrs[jmp_end+1] = len(s.instrs)
+                s.instrs[jmp_end+1]=len(s.instrs)
             else:
-                s.instrs[jmp_else+1] = len(s.instrs)
+                s.instrs[jmp_else+1]=len(s.instrs)
         elif isinstance(st, While):
-            loop_start = len(s.instrs)
+            loop_start=len(s.instrs)
             s.compile_expr(st.cond)
-            jmp_out = len(s.instrs); s.emit('JMPF', 0)
+            jmp_out=len(s.instrs); s.emit('JMPF', 0)
             s.compile_block(st.body)
             s.emit('JMP', loop_start)
-            s.instrs[jmp_out+1] = len(s.instrs)
+            s.instrs[jmp_out+1]=len(s.instrs)
         elif isinstance(st, Return):
             for e in st.exprs: s.compile_expr(e)
             s.emit('RETURN', len(st.exprs))
@@ -334,18 +315,18 @@ class Compiler:
         elif isinstance(e, Nil): s.emit('LOADK', s.const(None))
         elif isinstance(e, Name): s.emit('LOADN', s.const(e.n))
         elif isinstance(e, BinOp):
-            if e.op == 'and':
+            if e.op=='and':
                 s.compile_expr(e.l)
-                j = len(s.instrs); s.emit('JMPF_SC', 0)
-                s.compile_expr(e.r); s.instrs[j+1] = len(s.instrs)
-            elif e.op == 'or':
+                j=len(s.instrs); s.emit('JMPF_SC', 0)
+                s.compile_expr(e.r); s.instrs[j+1]=len(s.instrs)
+            elif e.op=='or':
                 s.compile_expr(e.l)
-                j = len(s.instrs); s.emit('JMPT', 0)
-                s.compile_expr(e.r); s.instrs[j+1] = len(s.instrs)
+                j=len(s.instrs); s.emit('JMPT', 0)
+                s.compile_expr(e.r); s.instrs[j+1]=len(s.instrs)
             else:
                 s.compile_expr(e.l); s.compile_expr(e.r)
-                ops = {'+':'ADD','-':'SUB','*':'MUL','/':'DIV','%':'MOD',
-                       '==':'EQ','~=':'NE','<':'LT','<=':'LE','>':'GT','>=':'GE'}
+                ops={'+':'ADD','-':'SUB','*':'MUL','/':'DIV','%':'MOD',
+                     '==':'EQ','~=':'NE','<':'LT','<=':'LE','>':'GT','>=':'GE'}
                 s.emit(ops[e.op])
         elif isinstance(e, UnOp):
             s.compile_expr(e.e); s.emit('NEG' if e.op=='-' else 'NOT')
@@ -359,15 +340,14 @@ class Compiler:
             raise NotImplementedError(type(e))
 
     def finish(s):
-        s.emit('HALT')
-        return s.instrs
+        s.emit('HALT'); return s.instrs
 
-# ─── Silent anti-logger (30 checks, break on fail) ──────────────────────────
+# ─── Silent anti-logger ─────────────────────────────────────────────────────
 def _esc(s):
-    out = []
+    out=[]
     for c in s:
-        o = ord(c)
-        out.append(f'\\{o:03d}' if o <= 255 else c)
+        o=ord(c)
+        out.append(f'\\{o:03d}' if o<=255 else c)
     return ''.join(out)
 
 HARDENED_CHECKS = [
@@ -592,103 +572,90 @@ HARDENED_CHECKS = [
 ]
 
 def build_checks_chain():
-    parts = []
-    for i, (cid, code) in enumerate(HARDENED_CHECKS):
-        kw = 'if' if i == 0 else 'elseif'
+    parts=[]
+    for i,(cid,code) in enumerate(HARDENED_CHECKS):
+        kw='if' if i==0 else 'elseif'
         parts.append(f'{kw} __cid=={cid} then\n{code}')
     parts.append('end')
     return '\n'.join(parts)
 
 def inject_anti_env(comp):
-    rnd = random.Random(comp.seed ^ 0xA5A5)
-    inv = {v:k for k,v in comp.op_id.items()}
-    units, i = [], 0
-    instrs = comp.instrs
-    while i < len(instrs):
-        opid = instrs[i]
-        name = inv.get(opid)
+    rnd=random.Random(comp.seed ^ 0xA5A5)
+    inv={v:k for k,v in comp.op_id.items()}
+    units,i=[],0
+    instrs=comp.instrs
+    while i<len(instrs):
+        opid=instrs[i]; name=inv.get(opid)
         if name is None:
-            units.append([opid]); i += 1; continue
-        nargs = ARG_COUNTS.get(name, 0)
-        units.append(instrs[i:i+1+nargs])
-        i += 1 + nargs
-    ids = [cid for cid, _ in HARDENED_CHECKS]
-    rnd.shuffle(ids)
-    chenv = [[comp.op_id['CHKENV'], cid] for cid in ids]
-    traps = [[comp.op_id['CHKTRAP'], rnd.randrange(1, 200)] for _ in range(8)]
-    n_start = max(3, len(chenv) // 3)
-    for u in reversed(chenv[:n_start] + traps[:3]):
-        units.insert(0, u)
-    for u in chenv[n_start:] + traps[3:]:
-        pos = rnd.randrange(len(units) + 1)
-        units.insert(pos, u)
-    flat = []
+            units.append([opid]); i+=1; continue
+        nargs=ARG_COUNTS.get(name,0)
+        units.append(instrs[i:i+1+nargs]); i+=1+nargs
+    ids=[cid for cid,_ in HARDENED_CHECKS]; rnd.shuffle(ids)
+    chenv=[[comp.op_id['CHKENV'],cid] for cid in ids]
+    traps=[[comp.op_id['CHKTRAP'],rnd.randrange(1,200)] for _ in range(8)]
+    n_start=max(3,len(chenv)//3)
+    for u in reversed(chenv[:n_start]+traps[:3]): units.insert(0,u)
+    for u in chenv[n_start:]+traps[3:]:
+        pos=rnd.randrange(len(units)+1); units.insert(pos,u)
+    flat=[]
     for u in units: flat.extend(u)
     return flat
 
 # ─── CFF ────────────────────────────────────────────────────────────────────
 def build_cff_states(instrs, op_id, rnd):
-    inv = {v:k for k,v in op_id.items()}
-    ins_list = []
-    i = 0
-    while i < len(instrs):
-        op = instrs[i]
-        name = inv.get(op)
-        if name is None:
-            i += 1; continue
-        n = ARG_COUNTS.get(name, 0)
-        args = list(instrs[i+1:i+1+n])
-        ins_list.append((i, name, args))
-        i += 1 + n
-    if not ins_list:
-        return None, {}
-    ids = rnd.sample(range(1000, 99000), len(ins_list))
-    offset_to_sid = {off: sid for (off, _, _), sid in zip(ins_list, ids)}
-    states = {}
-    for idx, (off, name, args) in enumerate(ins_list):
-        sid = ids[idx]
-        opnum = op_id[name]
-        fall = ids[idx+1] if idx+1 < len(ins_list) else 0
-        if name == 'JMP':
-            tgt = offset_to_sid.get(args[0], 0)
-            states[sid] = (opnum, 0, 0, 0, tgt)
-        elif name in ('JMPF', 'JMPF_SC', 'JMPT'):
-            tgt = offset_to_sid.get(args[0], 0)
-            states[sid] = (opnum, 0, 0, fall, tgt)
-        elif name == 'HALT':
-            states[sid] = (opnum, 0, 0, 0, 0)
+    inv={v:k for k,v in op_id.items()}
+    ins_list=[]; i=0
+    while i<len(instrs):
+        op=instrs[i]; name=inv.get(op)
+        if name is None: i+=1; continue
+        n=ARG_COUNTS.get(name,0)
+        args=list(instrs[i+1:i+1+n])
+        ins_list.append((i,name,args))
+        i+=1+n
+    if not ins_list: return None,{}
+    ids=rnd.sample(range(1000,99000),len(ins_list))
+    offset_to_sid={off:sid for (off,_,_),sid in zip(ins_list,ids)}
+    states={}
+    for idx,(off,name,args) in enumerate(ins_list):
+        sid=ids[idx]; opnum=op_id[name]
+        fall=ids[idx+1] if idx+1<len(ins_list) else 0
+        if name=='JMP':
+            tgt=offset_to_sid.get(args[0],0)
+            states[sid]=(opnum,0,0,0,tgt)
+        elif name in ('JMPF','JMPF_SC','JMPT'):
+            tgt=offset_to_sid.get(args[0],0)
+            states[sid]=(opnum,0,0,fall,tgt)
+        elif name=='HALT':
+            states[sid]=(opnum,0,0,0,0)
         else:
-            a = args[0] if len(args) > 0 else 0
-            b = args[1] if len(args) > 1 else 0
-            states[sid] = (opnum, a, b, fall, 0)
+            a=args[0] if len(args)>0 else 0
+            b=args[1] if len(args)>1 else 0
+            states[sid]=(opnum,a,b,fall,0)
     return ids[0], states
 
 def add_trampolines_and_decoys(states, op_id, rnd):
-    nop = op_id['NOP']
-    out = dict(states)
+    nop=op_id['NOP']; out=dict(states)
     for sid in list(states.keys()):
-        opnum, a, b, nf, nj = out[sid]
-        if nf and rnd.random() < 0.35:
-            tid = rnd.randint(200000, 299999)
-            while tid in out: tid = rnd.randint(200000, 299999)
-            out[tid] = (nop, 0, 0, nf, 0)
-            out[sid] = (opnum, a, b, tid, nj)
-        opnum, a, b, nf, nj = out[sid]
-        if nj and rnd.random() < 0.35:
-            tid = rnd.randint(200000, 299999)
-            while tid in out: tid = rnd.randint(200000, 299999)
-            out[tid] = (nop, 0, 0, nj, 0)
-            out[sid] = (opnum, a, b, nf, tid)
-    real = list(states.keys())
-    n_decoys = min(150, max(20, len(real) // 3))
-    decoys = []
+        opnum,a,b,nf,nj=out[sid]
+        if nf and rnd.random()<0.35:
+            tid=rnd.randint(200000,299999)
+            while tid in out: tid=rnd.randint(200000,299999)
+            out[tid]=(nop,0,0,nf,0); out[sid]=(opnum,a,b,tid,nj)
+        opnum,a,b,nf,nj=out[sid]
+        if nj and rnd.random()<0.35:
+            tid=rnd.randint(200000,299999)
+            while tid in out: tid=rnd.randint(200000,299999)
+            out[tid]=(nop,0,0,nj,0); out[sid]=(opnum,a,b,nf,tid)
+    real=list(states.keys())
+    n_decoys=min(150,max(20,len(real)//3))
+    decoys=[]
     for _ in range(n_decoys):
-        did = rnd.randint(300000, 399999)
-        while did in out: did = rnd.randint(300000, 399999)
+        did=rnd.randint(300000,399999)
+        while did in out: did=rnd.randint(300000,399999)
         decoys.append(did)
     for did in decoys:
-        tgt = rnd.choice(decoys) if rnd.random() < 0.7 else rnd.choice(real)
-        out[did] = (nop, 0, 0, tgt, 0)
+        tgt=rnd.choice(decoys) if rnd.random()<0.7 else rnd.choice(real)
+        out[did]=(nop,0,0,tgt,0)
     return out
 
 # ─── Serialization ──────────────────────────────────────────────────────────
@@ -697,22 +664,114 @@ def const_to_lua(c):
     if isinstance(c, bool): return 'true' if c else 'false'
     if isinstance(c, (int, float)): return repr(c)
     if isinstance(c, str):
-        esc = c.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\r','\\r')
+        esc=c.replace('\\','\\\\').replace('"','\\"').replace('\n','\\n').replace('\r','\\r')
         return f'"{esc}"'
-    if isinstance(c, tuple) and c[0] == '__STR_DEC__':
+    if isinstance(c, tuple) and c[0]=='__STR_DEC__':
         _, payload, key_repr = c
         return '{__str=true,payload="%s",key=%s}' % (payload, key_repr)
     return 'nil'
 
 def states_to_lua(states):
-    lines = ['local __states={']
-    for sid, (opnum, a, b, nf, nj) in states.items():
-        lines.append(f'[{sid}]={{{opnum},{a},{b},{nf},{nj}}},')
+    lines=['local __states={']
+    for sid,(opnum,a,b,nf,nj) in states.items():
+        lines.append(f'  [{sid}]={{{opnum},{a},{b},{nf},{nj}}},')
     lines.append('}')
     return '\n'.join(lines)
 
+def consts_to_lua(comp):
+    if not comp.consts: return 'local __consts={}\n'
+    parts=[]
+    for c in comp.consts:
+        parts.append('  ' + const_to_lua(c) + ',')
+    return 'local __consts={\n' + '\n'.join(parts) + '\n}\n'
+
+# ─── Lua-aware line formatter ───────────────────────────────────────────────
+def format_lua_output(code, max_line=150):
+    out=[]; buf=[]; i=0; n=len(code); line_len=0
+    st='normal'; lstr_close=None; lcom_close=None
+
+    def flush():
+        nonlocal buf, line_len
+        if buf:
+            out.append(''.join(buf)); buf=[]; line_len=0
+
+    while i < n:
+        c = code[i]
+
+        if st in ('dq','sq'):
+            buf.append(c); line_len+=1
+            if c=='\\' and i+1<n:
+                buf.append(code[i+1]); line_len+=1; i+=2; continue
+            if c == ('"' if st=='dq' else "'"): st='normal'
+            i+=1; continue
+
+        if st=='lstr':
+            if code.startswith(lstr_close,i):
+                buf.append(lstr_close); line_len+=len(lstr_close)
+                i+=len(lstr_close); st='normal'; continue
+            buf.append(c); line_len+=1
+            if c=='\n': flush()
+            i+=1; continue
+
+        if st=='lcom':
+            if code.startswith(lcom_close,i):
+                buf.append(lcom_close); line_len+=len(lcom_close)
+                i+=len(lcom_close); st='normal'; continue
+            buf.append(c); line_len+=1
+            if c=='\n': flush()
+            i+=1; continue
+
+        if st=='com':
+            buf.append(c); line_len+=1
+            if c=='\n': flush(); st='normal'
+            i+=1; continue
+
+        if code.startswith('--',i):
+            m=re.match(r'--\[(=*)\[', code[i:])
+            if m:
+                eq=m.group(1); lcom_close=']'+eq+']'
+                tok=code[i:i+3+len(eq)]
+                buf.append(tok); line_len+=len(tok)
+                i+=len(tok); st='lcom'; continue
+            buf.append('--'); line_len+=2; i+=2; st='com'; continue
+
+        if c=='[':
+            m=re.match(r'\[(=*)\[', code[i:])
+            if m:
+                eq=m.group(1); lstr_close=']'+eq+']'
+                tok=code[i:i+2+len(eq)]
+                buf.append(tok); line_len+=len(tok)
+                i+=len(tok); st='lstr'; continue
+
+        if c=='"': st='dq'; buf.append(c); line_len+=1; i+=1; continue
+        if c=="'": st='sq'; buf.append(c); line_len+=1; i+=1; continue
+
+        buf.append(c); line_len+=1
+
+        if c=='\n':
+            flush(); i+=1; continue
+
+        if c in ';}' and line_len>=max_line:
+            flush(); i+=1; continue
+
+        if line_len>=max_line:
+            s=''.join(buf).rstrip()
+            matched=False
+            for kw in ('then','do','else','end'):
+                if s.endswith(kw):
+                    prev=s[-len(kw)-1:-len(kw)] if len(s)>len(kw) else ''
+                    if not (prev.isalnum() or prev=='_'):
+                        flush(); matched=True; break
+            if matched:
+                i+=1; continue
+
+        i+=1
+
+    flush()
+    return '\n'.join(out)
+
 # ═══════════════════════════════════════════════════════════════════════════
-# Anti-tamper v3 (hard / soft / none)
+# Anti-tamper
 # ═══════════════════════════════════════════════════════════════════════════
 ANTI_TAMPER_CORE = r'''
 local __at_fired = false
@@ -995,7 +1054,7 @@ if __at_code then
   ⠀⠀⠀⠀⠀⠀⠀⢐⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿
   ⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇
   ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⢿⣿⣿⣿⣿⠟
-  Syscure Anti-Tamper v3 — get a better environmental logger.
+  Anti-Tamper — get a better environmental logger.
   ]==]
     task.spawn(function()
         task.wait(0.05)
@@ -1011,7 +1070,7 @@ if __at_code then return end
 '''
 
 # ═══════════════════════════════════════════════════════════════════════════
-# NEW anti-env logger (silent via pcall + return)
+# New anti-env logger (silent via pcall + return)
 # ═══════════════════════════════════════════════════════════════════════════
 ANTI_ENV_PREAMBLE = r'''
 if not pcall(function()
@@ -1163,13 +1222,8 @@ end)then return end
 
 # ─── Watermark ──────────────────────────────────────────────────────────────
 WATERMARK = '''--[[
-================================================================
-  PROTECTED FILE
-  This script is protected by an advanced VM obfuscation system.
-  Reverse engineering, modification and redistribution are
-  strictly prohibited. All integrity checks execute silently
-  at runtime; any tampering results in silent termination.
-================================================================
+  Protected by Moonslot
+  Unauthorized reproduction or distribution is prohibited.
 ]]
 '''
 
@@ -1178,8 +1232,8 @@ CFF_VM_TEMPLATE = r'''
 __ANTI_TAMPER__
 __ANTI_ENV__
 
-local __states={__STATES__}
-local __consts={__CONSTS__}
+__STATES__
+__CONSTS__
 local __env={} local __stack={} local __sp=0
 local __sinit=__INIT__
 
@@ -1282,12 +1336,11 @@ end
 
 # ─── Bundler ────────────────────────────────────────────────────────────────
 def assemble_cff(comp, states, init_state, anti_tamper='hard'):
-    consts_lua = '{' + ','.join(const_to_lua(c) for c in comp.consts) + '}'
     repl = {}
     for name, oid in comp.op_id.items():
         repl[f'__{name}__'] = str(oid)
     repl['__STATES__'] = states_to_lua(states)
-    repl['__CONSTS__'] = consts_lua
+    repl['__CONSTS__'] = consts_to_lua(comp)
     repl['__INIT__'] = str(init_state)
     repl['__CHECKS__'] = build_checks_chain()
     if anti_tamper == 'hard':
@@ -1311,6 +1364,7 @@ def build_bundle(source, seed=0, min_size=23000, anti_tamper='hard'):
     init_state, states = build_cff_states(protected, comp.op_id, rnd)
     states = add_trampolines_and_decoys(states, comp.op_id, rnd)
     out = assemble_cff(comp, states, init_state, anti_tamper)
+    out = format_lua_output(out, max_line=150)
     full = WATERMARK + out
     if len(full) < min_size:
         gap = min_size - len(full)
@@ -1321,7 +1375,9 @@ def build_bundle(source, seed=0, min_size=23000, anti_tamper='hard'):
             did = 400000 + k
             while did in extra: did += 1
             extra[did] = (nop, 0, 0, rnd.choice(real), 0)
-        full = WATERMARK + assemble_cff(comp, extra, init_state, anti_tamper)
+        out = assemble_cff(comp, extra, init_state, anti_tamper)
+        out = format_lua_output(out, max_line=150)
+        full = WATERMARK + out
     return full
 
 # ─── CLI ────────────────────────────────────────────────────────────────────
@@ -1331,10 +1387,8 @@ def main():
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--min-size', type=int, default=23000)
-    ap.add_argument('--anti-tamper', choices=['hard', 'soft', 'none'], default='hard',
-                    help='hard=crash+troll, soft=silent return, none=disabled')
-    ap.add_argument('--no-anti-tamper', action='store_true',
-                    help='Alias for --anti-tamper none')
+    ap.add_argument('--anti-tamper', choices=['hard','soft','none'], default='hard')
+    ap.add_argument('--no-anti-tamper', action='store_true')
     args = ap.parse_args()
     mode = 'none' if args.no_anti_tamper else args.anti_tamper
     with open(args.input, encoding='utf-8') as f:
