@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (Seak VM + Moonslot Anti-Tamper)
+# obfuscator.py — Luau VM obfuscator (Anti-Tamper 1x VM, User Script 18x VM)
 import re
 import random
 import argparse
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. WATERMARK Y ANTI-TAMPER (Cuerpo)
+# 1. WATERMARK Y ANTI-TAMPER
 # ═══════════════════════════════════════════════════════════════════════════
 HEADER = '''--[[
   Protected by Moonslot
@@ -401,35 +401,6 @@ def heavyMath(n) -> str:
     a, b, c, d = random.randint(500, 3499), random.randint(2, 51), random.randint(10, 809), random.randint(2, 21)
     return f"((((({n}+{a})*{b})/{b})-{a})+(({c}*{d})/{d})-{c})"
 
-def mba() -> str:
-    n, a, b = (1 if random.random() > 0.5 else 2), random.randint(15, 84), random.randint(8, 47)
-    return f"(({n}*{a}-{a})/({b}+1)+{n})"
-
-MAPEO = {
-    "ScreenGui": "Aggressive Renaming", "Frame": "String to Math",
-    "TextLabel": "Table Indirection", "TextButton": "Mixed Boolean Arithmetic",
-    "Humanoid": "Dynamic Junk", "Player": "Fake Flow",
-    "RunService": "Virtual Machine", "TweenService": "Fake Flow", "Players": "Fake Flow",
-}
-
-def detectAndApplyMappings(code: str) -> str:
-    modified = code
-    headers = ""
-    for word, tech in MAPEO.items():
-        pattern = re.compile(r"\b" + re.escape(word) + r"\b")
-        if pattern.search(modified):
-            replacement = f'"{word}"'
-            if "Aggressive Renaming" in tech:
-                v = randomName()
-                headers += f'local {v}="{word}";'
-                replacement = v
-            elif "String to Math" in tech:
-                replacement = "string.char(" + ",".join(heavyMath(ord(c)) for c in word) + ")"
-            elif "Mixed Boolean Arithmetic" in tech:
-                replacement = f'(({mba()}==1 or true)and"{word}")'
-            modified = pattern.sub(lambda m, r=replacement: f"game[{r}]", modified)
-    return headers + modified
-
 def generateSingleJunkLine() -> str:
     r = random.random()
     if r < 0.2: return f"local {randomName()}={heavyMath(random.randint(0, 998))} "
@@ -452,48 +423,46 @@ def applyCFF(blocks) -> str:
     return lua
 
 def runtimeString(s: str) -> str:
-    return "string.char(" + ",".join(heavyMath(ord(c)) for c in s) + ")"
+    return "string.char(" + ",".join(str(ord(c)) for c in s) + ")"
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER = randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    vmCore = f"local {STACK}={{}} local {KEY}={heavyMath(seed)} "
-    chunkSize = 10
+    vmCore = f"local {STACK}={{}} local {KEY}={seed} "
+    chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     poolVars, realOrder = [], []
-    totalChunks, currentReal, globalIndex = len(realChunks) * 4, 0, 0
+    
+    totalChunks = int(len(realChunks) * 1.5) if len(realChunks) > 1 else 1
+    currentReal, globalIndex = 0, 0
 
     for i in range(totalChunks):
         memName = randomName()
         poolVars.append(memName)
-        if currentReal < len(realChunks) and (random.random() > 0.6 or (totalChunks - i) == (len(realChunks) - currentReal)):
+        if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
             realOrder.append(i + 1)
             chunk = realChunks[currentReal]
             encryptedBytes = []
             for j in range(len(chunk)):
                 enc = ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF)
-                encryptedBytes.append(heavyMath(enc))
+                encryptedBytes.append(str(enc))
                 globalIndex += 1
             vmCore += f"local {memName}={{{','.join(encryptedBytes)}}} "
             currentReal += 1
         else:
-            fakeBytes = [heavyMath(random.randint(0, 254)) for _ in range(random.randint(5, 29))]
+            fakeBytes = [str(random.randint(0, 254)) for _ in range(random.randint(5, 15))]
             vmCore += f"local {memName}={{{','.join(fakeBytes)}}} "
 
-    vmCore += f"local _pool={{{','.join(poolVars)}}} local {ORDER}={{{','.join(heavyMath(n) for n in realOrder)}}} "
+    vmCore += f"local _pool={{{','.join(poolVars)}}} local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar, byteVar = randomName(), randomName()
     vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs(_pool[{idxVar}]) do "
     vmCore += f"table.insert({STACK}, string.char(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256))) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
+    
     ASSERT = f'getgenv()[{runtimeString("assert")}]'
     LOADSTRING = f'getgenv()[{runtimeString("loadstring")}]'
-    GAME = f'getgenv()[{runtimeString("game")}]'
-    HTTPGET = runtimeString("HttpGet")
-
-    if "http" in payloadStr:
-        vmCore += f"{ASSERT}({LOADSTRING}({GAME}[{HTTPGET}]({GAME}, _e)))() "
-    else:
-        vmCore += f"{ASSERT}({LOADSTRING}(_e))() "
+    
+    vmCore += f"{ASSERT}({LOADSTRING}(_e))() "
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int) -> str:
@@ -502,8 +471,8 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     DISPATCH = randomName()
     out = "local lM={} "
     for i, h in enumerate(handlers):
-        if i == realIdx: out += f"local {h}=function(lM) local lM=lM; {generateJunk(8)} {innerCode} end "
-        else: out += f"local {h}=function(lM) local lM=lM; {generateJunk(4)} return nil end "
+        if i == realIdx: out += f"local {h}=function(lM) local lM=lM; {generateJunk(5)} {innerCode} end "
+        else: out += f"local {h}=function(lM) local lM=lM; {generateJunk(3)} return nil end "
     out += f"local {DISPATCH}={{"
     for i, h in enumerate(handlers): out += f"[{heavyMath(i + 1)}]={h},"
     out += "} "
@@ -511,9 +480,17 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     out += applyCFF(execBlocks)
     return out
 
-def build18xVM(payloadStr: str) -> str:
+def build1xVM(payloadStr: str) -> str:
+    """1 sola capa de VM (usada para el anti-tamper para mantenerlo comprimido)"""
     vm = buildTrueVM(payloadStr)
-    for _ in range(25): vm = buildSingleVM(vm, random.randint(3, 4))
+    vm = buildSingleVM(vm, random.randint(3, 4))
+    return vm
+
+def build18xVM(payloadStr: str) -> str:
+    """18 capas de VM (usada para el script del usuario)"""
+    vm = buildTrueVM(payloadStr)
+    for _ in range(18): 
+        vm = buildSingleVM(vm, random.randint(3, 4))
     return vm
 
 def buildAntiEnvProtection():
@@ -521,7 +498,7 @@ def buildAntiEnvProtection():
     fragSize = 4 + random.randint(0, 2)
     fragments = [antiEnvCode[i:i + fragSize] for i in range(0, len(antiEnvCode), fragSize)]
     tableName = randomName()
-    fragmentLines = [f"{tableName}[#{tableName}+1] = string.char({','.join(heavyMath(ord(c)) for c in frag)})" for frag in fragments]
+    fragmentLines = [f"{tableName}[#{tableName}+1] = string.char({','.join(str(ord(c)) for c in frag)})" for frag in fragments]
     initLine = f"local {tableName} = {{}}"
     reconstructLine = f"local _reco = table.concat({tableName}); assert(loadstring(_reco))();"
     return initLine, fragmentLines, reconstructLine
@@ -536,7 +513,7 @@ def getExtraProtections() -> str:
         'if gcinfo and gcinfo()<0 then _err() end', 'if type(next)~="function" then _err() end',
         'if string.len("a")~=1 then _err() end', 'if type(table.insert)~="function" then _err() end',
         'if string.byte("Z",1)~=90 then _err() end', 'if math.floor(-1/10)~=-1 then _err() end',
-        'if (true and 1 or 2)~=1 then _err() end', 'if type(1)~="number" then _err() end', 'if type(pcall)~="function" then _err() end',
+        'if (true and 1 or 2)~=1 then _err() end', 'if type(1)~="number" then _err() end', 'if type(pcall)~="function" then _err() end'
     ]
     codeVaultGuards = ""
     for t in rawTampers:
@@ -545,52 +522,66 @@ def getExtraProtections() -> str:
         codeVaultGuards += f"local {fnName}=function() local {errName}=error {patched} end {fnName}() "
     return antiDebuggers + codeVaultGuards
 
+def detectAndApplyMappings(code: str) -> str:
+    modified = code
+    headers = ""
+    MAPEO = {"ScreenGui": "Aggressive Renaming", "Frame": "String to Math", "TextLabel": "Table Indirection", "TextButton": "Mixed Boolean Arithmetic", "Humanoid": "Dynamic Junk", "Player": "Fake Flow", "RunService": "Virtual Machine", "TweenService": "Fake Flow", "Players": "Fake Flow"}
+    for word, tech in MAPEO.items():
+        pattern = re.compile(r"\b" + re.escape(word) + r"\b")
+        if pattern.search(modified):
+            replacement = f'"{word}"'
+            if "Aggressive Renaming" in tech:
+                v = randomName()
+                headers += f'local {v}="{word}";'
+                replacement = v
+            elif "String to Math" in tech:
+                replacement = "string.char(" + ",".join(heavyMath(ord(c)) for c in word) + ")"
+            elif "Mixed Boolean Arithmetic" in tech:
+                mba_val = f"((({random.randint(1,2)}*{random.randint(15,84)}-{random.randint(15,84)})/({random.randint(8,47)}+1)+{random.randint(1,2)})==1 or true)"
+                replacement = f'({mba_val} and "{word}")'
+            modified = pattern.sub(lambda m, r=replacement: f"game[{r}]", modified)
+    return headers + modified
+
 # ═══════════════════════════════════════════════════════════════════════════
-# 4. ORQUESTADOR PRINCIPAL (UNIFICADO)
+# 4. ORQUESTADOR PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode: return '--ERROR'
     random.seed(seed)
 
-    # 1. Obtener el script del usuario (detectando si es un loadstring de http)
-    isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
-    match = isLoadstringRegex.search(sourceCode)
-    payloadToProtect = match.group(1) if match else detectAndApplyMappings(sourceCode)
-
-    # 2. Generar el anti-env y las protecciones adicionales
+    # 1. Preparar bloque de protección (Anti-Tamper + Anti-Env + Anti-Debug)
     initLine, fragmentLines, reconstructLine = buildAntiEnvProtection()
-    lines = [initLine]
-    for _ in range(80):
-        lines.append(generateSingleJunkLine())
-    for stmt in fragmentLines:
-        lines.insert(random.randint(1, len(lines) - 1), stmt)
-    lines.append(reconstructLine)
-    combinedAntiEnv = "\n".join(lines)
-
+    antiEnvLines = [initLine] + fragmentLines + [reconstructLine]
+    antiEnvCode = "\n".join(antiEnvLines)
+    
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do end end "
-    extraProtections = getExtraProtections()
-
-    # 3. UNIFICAR TODO EN UN SOLO BLOQUE
-    # El anti-tamper se envuelve en una función IIFE para que el return sea local
-    # y poder llamarlo con pcall.
-    unified_payload = (
+    extraProts = getExtraProtections()
+    
+    protection_payload = (
         "local __run_at = function()\n"
         + ANTI_TAMPER_CORE.strip() + "\n"
         + "end\n"
         + "pcall(__run_at)\n"
-        + combinedAntiEnv + "\n"
+        + antiEnvCode + "\n"
         + antiDebug + "\n"
-        + extraProtections + "\n"
-        + payloadToProtect
+        + extraProts
     )
 
-    # 4. Pasarlo TODO por la VM de Seak (crea el string encryption, el control flow flattening, etc.)
-    finalVM = build18xVM(unified_payload)
+    # 2. Ofuscar protección con 1 SOLA VM (Comprimido)
+    final_protection = build1xVM(protection_payload)
 
-    # 5. Ensamblar el output
+    # 3. Ofuscar script del usuario con 18 CAPAS DE VM
+    isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
+    match = isLoadstringRegex.search(sourceCode)
+    payloadToProtect = match.group(1) if match else detectAndApplyMappings(sourceCode)
+    
+    final_user_script = build18xVM(payloadToProtect)
+
+    # 4. Ensamblar output final
     final_code = (
         f"{HEADER}\n\n"
-        f"{finalVM}"
+        f"{final_protection}\n"
+        f"{final_user_script}"
     )
     return format_lua_output(final_code, max_line=120)
 
