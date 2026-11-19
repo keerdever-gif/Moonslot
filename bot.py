@@ -19,6 +19,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     sys.exit("ERROR: DISCORD_TOKEN not set. Create a .env file with DISCORD_TOKEN=your_token")
 
+PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY")  # opcional si solo creas pastes anónimos
 PASTEFY_URL = "https://pastefy.app/api/v2/paste"
 
 BASE_DIR      = Path(__file__).resolve().parent
@@ -164,13 +165,18 @@ async def pastefy(interaction: discord.Interaction, code: str = None, file: disc
         "visibility": "UNLISTED"
     }
     headers = {"Content-Type": "application/json"}
+    if PASTEFY_API_KEY:
+        headers["Authorization"] = f"Bearer {PASTEFY_API_KEY}"
 
     async with aiohttp.ClientSession() as session:
         async with session.post(PASTEFY_URL, json=payload, headers=headers) as resp:
             if resp.status not in (200, 201):
                 text = await resp.text()
                 await interaction.followup.send(
-                    embed=purple_embed("❌ Pastefy error", f"```{text[:1000]}```"),
+                    embed=purple_embed(
+                        "❌ Pastefy error",
+                        f"Status: `{resp.status}`\n```{text[:1000]}```"
+                    ),
                     ephemeral=True
                 )
                 return
