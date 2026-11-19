@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (Seak + Moonslot Anti-Tamper)
+# obfuscator.py — Luau VM obfuscator (Seak VM + Moonslot Anti-Tamper)
+# Anti-tamper ofuscado con el mismo pipeline que el payload.
 import re
+import base64
 import random
 import argparse
-import sys
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. WATERMARK Y PROTECCIONES BASE
+# 1. WATERMARK Y ANTI-TAMPER (cuerpo — se ofusca antes de emitirse)
 # ═══════════════════════════════════════════════════════════════════════════
 HEADER = '''--[[
   Protected by Moonslot
   Unauthorized reproduction or distribution is prohibited.
 ]]'''
 
+# NOTA: este bloque ya NO se emite en plano. Se envuelve en IIFE y se pasa
+# por build18xVM() en obfuscate().
 ANTI_TAMPER_CORE = r'''
 local __at_fired = false
 local __at_code, __at_text = nil, nil
@@ -245,7 +248,7 @@ pcall(__at_fixHooks)
 __at_code,__at_text=__at_run()
 
 if __at_code then
-    if __at_fired then return end
+    if __at_fired then return __at_code,__at_text end
     __at_fired=true
     pcall(function()
         local e=(getgenv and getgenv()) or _G
@@ -267,17 +270,14 @@ if __at_code then
   ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⢿⣿⣿⣿⣿⠟
   Anti-Tamper — get a better environmental logger.
   ]==]
-    task.spawn(function()
-        task.wait(0.05)
-        if type(print)=="function" then pcall(print,__troll) end
-        error("[SC-AT] "..tostring(__at_text).." ("..tostring(__at_code)..")",0)
-    end)
-    while true do if coroutine and coroutine.yield then coroutine.yield() end end
+    if type(print) == "function" then pcall(print, __troll) end
+    while true do end
 end
+return __at_code,__at_text
 '''
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. FORMAT LUA (Compresión inteligente sin romper Strings)
+# 2. FORMAT LUA (compresión inteligente sin romper strings)
 # ═══════════════════════════════════════════════════════════════════════════
 def format_lua_output(code, max_line=120):
     out = []
@@ -384,13 +384,12 @@ def format_lua_output(code, max_line=120):
     return '\n'.join(out)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. SEAK OBFUSCATOR CORE
+# 3. SEAK OBFUSCATOR CORE (junk code + VM)
 # ═══════════════════════════════════════════════════════════════════════════
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
-    rand_part = "".join(random.choice(_BASE36) for _ in range(6))
-    return "_" + rand_part + str(random.randint(0, 999))
+    return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 999))
 
 def pickHandlers(count: int):
     used = set()
@@ -403,30 +402,19 @@ def pickHandlers(count: int):
     return result
 
 def heavyMath(n) -> str:
-    if random.random() < 0.8:
-        return str(n)
-    a = random.randint(500, 3499)
-    b = random.randint(2, 51)
-    c = random.randint(10, 809)
-    d = random.randint(2, 21)
+    if random.random() < 0.8: return str(n)
+    a, b, c, d = random.randint(500, 3499), random.randint(2, 51), random.randint(10, 809), random.randint(2, 21)
     return f"((((({n}+{a})*{b})/{b})-{a})+(({c}*{d})/{d})-{c})"
 
 def mba() -> str:
-    n = 1 if random.random() > 0.5 else 2
-    a = random.randint(15, 84)
-    b = random.randint(8, 47)
+    n, a, b = (1 if random.random() > 0.5 else 2), random.randint(15, 84), random.randint(8, 47)
     return f"(({n}*{a}-{a})/({b}+1)+{n})"
 
 MAPEO = {
-    "ScreenGui":      "Aggressive Renaming",
-    "Frame":          "String to Math",
-    "TextLabel":      "Table Indirection",
-    "TextButton":     "Mixed Boolean Arithmetic",
-    "Humanoid":       "Dynamic Junk",
-    "Player":         "Fake Flow",
-    "RunService":     "Virtual Machine",
-    "TweenService":   "Fake Flow",
-    "Players":        "Fake Flow",
+    "ScreenGui": "Aggressive Renaming", "Frame": "String to Math",
+    "TextLabel": "Table Indirection", "TextButton": "Mixed Boolean Arithmetic",
+    "Humanoid": "Dynamic Junk", "Player": "Fake Flow",
+    "RunService": "Virtual Machine", "TweenService": "Fake Flow", "Players": "Fake Flow",
 }
 
 def detectAndApplyMappings(code: str) -> str:
@@ -444,29 +432,17 @@ def detectAndApplyMappings(code: str) -> str:
                 replacement = "string.char(" + ",".join(heavyMath(ord(c)) for c in word) + ")"
             elif "Mixed Boolean Arithmetic" in tech:
                 replacement = f'(({mba()}==1 or true)and"{word}")'
-
-            modified = pattern.sub(
-                lambda m, r=replacement: f"game[{r}]",
-                modified,
-            )
+            modified = pattern.sub(lambda m, r=replacement: f"game[{r}]", modified)
     return headers + modified
 
 def generateSingleJunkLine() -> str:
     r = random.random()
-    if r < 0.2:
-        return f"local {randomName()}={heavyMath(random.randint(0, 998))} "
-    elif r < 0.35:
-        return f"local {randomName()}=string.char({heavyMath(random.randint(0, 254))}) "
-    elif r < 0.5:
-        return f"if not({heavyMath(1)}=={heavyMath(1)}) then local x=1 end "
-    elif r < 0.7:
-        tp = randomName()
-        return f'if type(nil)=="number" then while true do local {tp}=1 end end '
-    elif r < 0.85:
-        vt = randomName()
-        return f'do local {vt}={{}} {vt}["_"]=1 {vt}=nil end '
-    else:
-        return 'if type(math.pi)=="string" then while true do end end '
+    if r < 0.2: return f"local {randomName()}={heavyMath(random.randint(0, 998))} "
+    elif r < 0.35: return f"local {randomName()}=string.char({heavyMath(random.randint(0, 254))}) "
+    elif r < 0.5: return f"if not({heavyMath(1)}=={heavyMath(1)}) then local x=1 end "
+    elif r < 0.7: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
+    elif r < 0.85: return f'do local {randomName()}={{}} {randomName()}["_"]=1 {randomName()}=nil end '
+    else: return 'if type(math.pi)=="string" then while true do end end '
 
 def generateJunk(lines: int = 100) -> str:
     return "".join(generateSingleJunkLine() for _ in range(lines))
@@ -475,31 +451,36 @@ def applyCFF(blocks) -> str:
     stateVar = randomName()
     lua = f"local {stateVar}={heavyMath(1)} while true do "
     for i, block in enumerate(blocks):
-        if i == 0:
-            lua += f"if {stateVar}=={heavyMath(1)} then {block} {stateVar}={heavyMath(2)} "
-        else:
-            lua += f"elseif {stateVar}=={heavyMath(i + 1)} then {block} {stateVar}={heavyMath(i + 2)} "
+        if i == 0: lua += f"if {stateVar}=={heavyMath(1)} then {block} {stateVar}={heavyMath(2)} "
+        else: lua += f"elseif {stateVar}=={heavyMath(i + 1)} then {block} {stateVar}={heavyMath(i + 2)} "
     lua += f"elseif {stateVar}=={heavyMath(len(blocks) + 1)} then break end end "
     return lua
 
 def runtimeString(s: str) -> str:
     return "string.char(" + ",".join(heavyMath(ord(c)) for c in s) + ")"
 
-def buildTrueVM(payloadStr: str) -> str:
-    STACK = randomName()
-    KEY = randomName()
-    ORDER = randomName()
-    seed = random.randint(50, 249)
+def runtimeB64(s: str) -> str:
+    """Encoder base64 compacto (~1.33x) — usado para el anti-tamper (grande)."""
+    b = base64.b64encode(s.encode()).decode()
+    decoder = (
+        '(function(s) local t="" for i=1,#s,4 do local n=0 '
+        'for j=0,3 do local c=s:byte(i+j) if not c then break end '
+        'local v=c>=65 and c<=90 and c-65 or c>=97 and c<=122 and c-71 '
+        'or c>=48 and c<=57 and c+4 or c==43 and 62 or c==47 and 63 or 0 '
+        'n=n*64+v end '
+        'for k=2,0,-1 do if n>=2^(6*k) then t=t..string.char(math.floor(n/2^(6*k))%256) end end end '
+        'return t end)("' + b + '")'
+    )
+    return decoder
 
+def buildTrueVM(payloadStr: str) -> str:
+    STACK, KEY, ORDER = randomName(), randomName(), randomName()
+    seed = random.randint(50, 249)
     vmCore = f"local {STACK}={{}} local {KEY}={heavyMath(seed)} "
     chunkSize = 10
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
-
-    poolVars = []
-    realOrder = []
-    totalChunks = len(realChunks) * 4
-    currentReal = 0
-    globalIndex = 0
+    poolVars, realOrder = [], []
+    totalChunks, currentReal, globalIndex = len(realChunks) * 4, 0, 0
 
     for i in range(totalChunks):
         memName = randomName()
@@ -515,19 +496,14 @@ def buildTrueVM(payloadStr: str) -> str:
             vmCore += f"local {memName}={{{','.join(encryptedBytes)}}} "
             currentReal += 1
         else:
-            fakeBytes = []
-            for _ in range(random.randint(5, 29)):
-                fakeBytes.append(heavyMath(random.randint(0, 254)))
+            fakeBytes = [heavyMath(random.randint(0, 254)) for _ in range(random.randint(5, 29))]
             vmCore += f"local {memName}={{{','.join(fakeBytes)}}} "
 
     vmCore += f"local _pool={{{','.join(poolVars)}}} local {ORDER}={{{','.join(heavyMath(n) for n in realOrder)}}} "
-    idxVar = randomName()
-    byteVar = randomName()
-
+    idxVar, byteVar = randomName(), randomName()
     vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs(_pool[{idxVar}]) do "
     vmCore += f"table.insert({STACK}, string.char(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256))) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-
     ASSERT = f'getgenv()[{runtimeString("assert")}]'
     LOADSTRING = f'getgenv()[{runtimeString("loadstring")}]'
     GAME = f'getgenv()[{runtimeString("game")}]'
@@ -545,13 +521,10 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     DISPATCH = randomName()
     out = "local lM={} "
     for i, h in enumerate(handlers):
-        if i == realIdx:
-            out += f"local {h}=function(lM) local lM=lM; {generateJunk(8)} {innerCode} end "
-        else:
-            out += f"local {h}=function(lM) local lM=lM; {generateJunk(4)} return nil end "
+        if i == realIdx: out += f"local {h}=function(lM) local lM=lM; {generateJunk(8)} {innerCode} end "
+        else: out += f"local {h}=function(lM) local lM=lM; {generateJunk(4)} return nil end "
     out += f"local {DISPATCH}={{"
-    for i, h in enumerate(handlers):
-        out += f"[{heavyMath(i + 1)}]={h},"
+    for i, h in enumerate(handlers): out += f"[{heavyMath(i + 1)}]={h},"
     out += "} "
     execBlocks = [f"{DISPATCH}[{heavyMath(i + 1)}](lM)" for i in range(len(handlers))]
     out += applyCFF(execBlocks)
@@ -559,59 +532,34 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
 
 def build18xVM(payloadStr: str) -> str:
     vm = buildTrueVM(payloadStr)
-    for _ in range(25):
-        vm = buildSingleVM(vm, random.randint(3, 4))
+    for _ in range(25): vm = buildSingleVM(vm, random.randint(3, 4))
     return vm
 
 def buildAntiEnvProtection():
-    antiEnvCode = """local p=game.Players.LocalPlayer
-local o=p.CameraMinZoomDistance
-pcall(function()
-p.CameraMinZoomDistance=-5
-end)
-print(p.CameraMinZoomDistance~=o and"detected"or"pass")"""
-
+    antiEnvCode = """local p=game.Players.LocalPlayer\nlocal o=p.CameraMinZoomDistance\npcall(function()\np.CameraMinZoomDistance=-5\nend)\nprint(p.CameraMinZoomDistance~=o and"detected"or"pass")"""
     fragSize = 4 + random.randint(0, 2)
     fragments = [antiEnvCode[i:i + fragSize] for i in range(0, len(antiEnvCode), fragSize)]
-
     tableName = randomName()
-    fragmentLines = []
-    for frag in fragments:
-        bytes_list = [heavyMath(ord(c)) for c in frag]
-        fragmentLines.append(f"{tableName}[#{tableName}+1] = string.char({','.join(bytes_list)})")
-
+    fragmentLines = [f"{tableName}[#{tableName}+1] = string.char({','.join(heavyMath(ord(c)) for c in frag)})" for frag in fragments]
     initLine = f"local {tableName} = {{}}"
     reconstructLine = f"local _reco = table.concat({tableName}); assert(loadstring(_reco))();"
     return initLine, fragmentLines, reconstructLine
 
 def getExtraProtections() -> str:
-    antiDebuggers = """
-    if getmetatable(_G)~=nil then while true do end end 
-    if type(print)~="function" then while true do end end
-    """
+    antiDebuggers = "if getmetatable(_G)~=nil then while true do end end if type(print)~=\"function\" then while true do end end "
     rawTampers = [
-        'if math.pi<3.14 or math.pi>3.15 then _err() end',
-        'if bit32 and bit32.bxor(10,5)~=15 then _err() end',
-        'if type(tostring)~="function" then _err() end',
-        'if not string.match("chk","^c.*k$") then _err() end',
-        'if type(coroutine.create)~="function" then _err() end',
-        'if type(table.concat)~="function" then _err() end',
-        'local _tm1=tick() local _tm2=tick() if _tm2<_tm1 then _err() end',
-        'if math.abs(-10)~=10 then _err() end',
-        'if gcinfo and gcinfo()<0 then _err() end',
-        'if type(next)~="function" then _err() end',
-        'if string.len("a")~=1 then _err() end',
-        'if type(table.insert)~="function" then _err() end',
-        'if string.byte("Z",1)~=90 then _err() end',
-        'if math.floor(-1/10)~=-1 then _err() end',
-        'if (true and 1 or 2)~=1 then _err() end',
-        'if type(1)~="number" then _err() end',
-        'if type(pcall)~="function" then _err() end',
+        'if math.pi<3.14 or math.pi>3.15 then _err() end', 'if bit32 and bit32.bxor(10,5)~=15 then _err() end',
+        'if type(tostring)~="function" then _err() end', 'if not string.match("chk","^c.*k$") then _err() end',
+        'if type(coroutine.create)~="function" then _err() end', 'if type(table.concat)~="function" then _err() end',
+        'local _tm1=tick() local _tm2=tick() if _tm2<_tm1 then _err() end', 'if math.abs(-10)~=10 then _err() end',
+        'if gcinfo and gcinfo()<0 then _err() end', 'if type(next)~="function" then _err() end',
+        'if string.len("a")~=1 then _err() end', 'if type(table.insert)~="function" then _err() end',
+        'if string.byte("Z",1)~=90 then _err() end', 'if math.floor(-1/10)~=-1 then _err() end',
+        'if (true and 1 or 2)~=1 then _err() end', 'if type(1)~="number" then _err() end', 'if type(pcall)~="function" then _err() end',
     ]
     codeVaultGuards = ""
     for t in rawTampers:
-        fnName = randomName()
-        errName = randomName()
+        fnName, errName = randomName(), randomName()
         patched = t.replace('_err()', f'{errName}("!")')
         codeVaultGuards += f"local {fnName}=function() local {errName}=error {patched} end {fnName}() "
     return antiDebuggers + codeVaultGuards
@@ -622,51 +570,66 @@ def getExtraProtections() -> str:
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
-    
     random.seed(seed)
-    
-    # 1. Generar el Anti-Env fragmentado (Seak)
+
+    # ── 1. ANTI-TAMPER OFUSCADO ──────────────────────────────────────────
+    #    Envolvemos el cuerpo en una IIFE para que el `return` final sea
+    #    local al chunk, y lo pasamos por la VM anidada de Seak. El
+    #    resultado es una cadena que, al ejecutarse con loadstring, corre
+    #    el anti-tamper y devuelve (code, text) vía el return final.
+    anti_chunk = (
+        "(function()\n"
+        + ANTI_TAMPER_CORE.strip() +
+        "\nend)()"
+    )
+    antiVM = build18xVM(anti_chunk)
+
+    # ── 2. JUNK + FRAGMENTACIÓN ANTI-ENV ────────────────────────────────
     initLine, fragmentLines, reconstructLine = buildAntiEnvProtection()
-    
-    # 2. Junk code base (Seak)
     lines = [initLine]
-    totalJunk = 80
-    for _ in range(totalJunk):
+    for _ in range(80):
         lines.append(generateSingleJunkLine())
-
     for stmt in fragmentLines:
-        pos = random.randint(1, len(lines) - 1)
-        lines.insert(pos, stmt)
-
+        lines.insert(random.randint(1, len(lines) - 1), stmt)
     lines.append(reconstructLine)
     combinedJunk = "\n".join(lines)
 
-    # 3. Anti-Debug y Protections (Seak)
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do end end "
     extraProtections = getExtraProtections()
 
-    # 4. Construir la VM de Seak con el código del usuario
-    isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
+    # ── 3. PAYLOAD OFUSCADO ─────────────────────────────────────────────
+    isLoadstringRegex = re.compile(
+        r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
+        re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
-    
-    if match:
-        payloadToProtect = match.group(1)
-    else:
-        payloadToProtect = detectAndApplyMappings(sourceCode)
+    payloadToProtect = match.group(1) if match else detectAndApplyMappings(sourceCode)
+    payloadVM = build18xVM(payloadToProtect)
 
-    finalVM = build18xVM(payloadToProtect)
-
-    # 5. Ensamblar todo el output final
-    final_code = (
-        f"{HEADER}\n\n"
-        f"{ANTI_TAMPER_CORE}\n\n"
-        f"{combinedJunk}\n\n"
-        f"{antiDebug}\n\n"
-        f"{extraProtections}\n\n"
-        f"{finalVM}"
+    # ── 4. BOOTSTRAP PLANO MÍNIMO ───────────────────────────────────────
+    #    Solo loadstring/getgenv/assert quedan visibles. El anti-tamper
+    #    detecta si los han hookeado (__at_checkDebug/__at_checkCritical).
+    #    Nota: el anti-tamper devuelve (code, text) vía su return final;
+    #    lo cargamos con loadstring y comprobamos el code.
+    bootstrap = (
+        "local _ls=getgenv().loadstring "
+        "local _as=getgenv().assert "
+        # Anti-tamper: la VM entera va como base64 (compacto) y se carga por loadstring.
+        "local _anti_src = " + runtimeB64(antiVM) + " "
+        "local _anti_chunk = _as(_ls(_anti_src)) "
+        "local _c,_t = _anti_chunk() "
+        "if _c then error('[Moonslot '..tostring(_c)..']',0) end "
+        # Payload: idem, tras validar el entorno.
+        "local _payload_src = " + runtimeB64(payloadVM) + " "
+        "_as(_ls(_payload_src))() "
     )
 
-    # 6. Aplicar el formateador de líneas (120 chars max)
+    final_code = (
+        f"{HEADER}\n\n"
+        f"{bootstrap}\n\n"
+        f"{combinedJunk}\n\n"
+        f"{antiDebug}\n\n"
+        f"{extraProtections}\n"
+    )
     return format_lua_output(final_code, max_line=120)
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -677,18 +640,13 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--min-size', type=int, default=23000) # Aceptado para compatibilidad con el bot
+    ap.add_argument('--min-size', type=int, default=23000)
     args = ap.parse_args()
-    
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
-        
     out = obfuscate(src, seed=args.seed)
-    
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write(out)
-        
-    # Salida silenciosa para el bot (stdout limpio)
 
 if __name__ == '__main__':
     main()
