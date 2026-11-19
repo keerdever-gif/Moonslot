@@ -379,22 +379,12 @@ def format_lua_output(code, max_line=120):
     return '\n'.join(out)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. SEAK OBFUSCATOR CORE (Junk Code + VM)
+# 3. SEAK OBFUSCATOR CORE (Junk Code + VM Optimizada)
 # ═══════════════════════════════════════════════════════════════════════════
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
     return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 999))
-
-def pickHandlers(count: int):
-    used = set()
-    result = []
-    while len(result) < count:
-        name = randomName() + str(random.randint(0, 98))
-        if name not in used:
-            used.add(name)
-            result.append(name)
-    return result
 
 def heavyMath(n) -> str:
     if random.random() < 0.8: return str(n)
@@ -415,47 +405,49 @@ def generateJunk(lines: int = 100) -> str:
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
-    lua = f"local {stateVar}={heavyMath(1)} while true do "
+    lua = f"local {stateVar}=1 while true do "
     for i, block in enumerate(blocks):
-        if i == 0: lua += f"if {stateVar}=={heavyMath(1)} then {block} {stateVar}={heavyMath(2)} "
-        else: lua += f"elseif {stateVar}=={heavyMath(i + 1)} then {block} {stateVar}={heavyMath(i + 2)} "
-    lua += f"elseif {stateVar}=={heavyMath(len(blocks) + 1)} then break end end "
+        if i == 0: lua += f"if {stateVar}==1 then {block} {stateVar}=2 "
+        else: lua += f"elseif {stateVar}=={i + 1} then {block} {stateVar}={i + 2} "
+    lua += f"elseif {stateVar}=={len(blocks) + 1} then break end end "
     return lua
 
 def runtimeString(s: str) -> str:
     return "string.char(" + ",".join(str(ord(c)) for c in s) + ")"
 
 def buildTrueVM(payloadStr: str) -> str:
-    STACK, KEY, ORDER = randomName(), randomName(), randomName()
+    STACK, KEY, ORDER, POOL = randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    vmCore = f"local {STACK}={{}} local {KEY}={seed} "
+    vmCore = f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
     chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
-    poolVars, realOrder = [], []
+    realOrder = []
     
-    totalChunks = int(len(realChunks) * 1.5) if len(realChunks) > 1 else 1
+    # 20% reduction: 1.2x multiplier instead of 1.5x
+    totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
+    if totalChunks < len(realChunks): totalChunks = len(realChunks)
+    
     currentReal, globalIndex = 0, 0
 
-    for i in range(totalChunks):
-        memName = randomName()
-        poolVars.append(memName)
+    for i in range(1, totalChunks + 1):
+        # No more "local _mem = ..." spam. Everything goes to the POOL table directly.
         if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
-            realOrder.append(i + 1)
+            realOrder.append(i)
             chunk = realChunks[currentReal]
             encryptedBytes = []
             for j in range(len(chunk)):
                 enc = ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF)
                 encryptedBytes.append(str(enc))
                 globalIndex += 1
-            vmCore += f"local {memName}={{{','.join(encryptedBytes)}}} "
+            vmCore += f"{POOL}[{i}]={{{','.join(encryptedBytes)}}} "
             currentReal += 1
         else:
             fakeBytes = [str(random.randint(0, 254)) for _ in range(random.randint(5, 15))]
-            vmCore += f"local {memName}={{{','.join(fakeBytes)}}} "
+            vmCore += f"{POOL}[{i}]={{{','.join(fakeBytes)}}} "
 
-    vmCore += f"local _pool={{{','.join(poolVars)}}} local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
+    vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar, byteVar = randomName(), randomName()
-    vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs(_pool[{idxVar}]) do "
+    vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs({POOL}[{idxVar}]) do "
     vmCore += f"table.insert({STACK}, string.char(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256))) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
     
@@ -466,17 +458,15 @@ def buildTrueVM(payloadStr: str) -> str:
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int) -> str:
-    handlers = pickHandlers(handlerCount)
-    realIdx = random.randint(0, handlerCount - 1)
     DISPATCH = randomName()
-    out = "local lM={} "
-    for i, h in enumerate(handlers):
-        if i == realIdx: out += f"local {h}=function(lM) local lM=lM; {generateJunk(5)} {innerCode} end "
-        else: out += f"local {h}=function(lM) local lM=lM; {generateJunk(3)} return nil end "
-    out += f"local {DISPATCH}={{"
-    for i, h in enumerate(handlers): out += f"[{heavyMath(i + 1)}]={h},"
-    out += "} "
-    execBlocks = [f"{DISPATCH}[{heavyMath(i + 1)}](lM)" for i in range(len(handlers))]
+    out = f"local {DISPATCH}={{}} "
+    realIdx = random.randint(0, handlerCount - 1)
+    
+    for i in range(handlerCount):
+        if i == realIdx: out += f"{DISPATCH}[{i+1}]=function(lM) {generateJunk(3)} {innerCode} end "
+        else: out += f"{DISPATCH}[{i+1}]=function(lM) {generateJunk(2)} return nil end "
+        
+    execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
     out += applyCFF(execBlocks)
     return out
 
@@ -522,26 +512,6 @@ def getExtraProtections() -> str:
         codeVaultGuards += f"local {fnName}=function() local {errName}=error {patched} end {fnName}() "
     return antiDebuggers + codeVaultGuards
 
-def detectAndApplyMappings(code: str) -> str:
-    modified = code
-    headers = ""
-    MAPEO = {"ScreenGui": "Aggressive Renaming", "Frame": "String to Math", "TextLabel": "Table Indirection", "TextButton": "Mixed Boolean Arithmetic", "Humanoid": "Dynamic Junk", "Player": "Fake Flow", "RunService": "Virtual Machine", "TweenService": "Fake Flow", "Players": "Fake Flow"}
-    for word, tech in MAPEO.items():
-        pattern = re.compile(r"\b" + re.escape(word) + r"\b")
-        if pattern.search(modified):
-            replacement = f'"{word}"'
-            if "Aggressive Renaming" in tech:
-                v = randomName()
-                headers += f'local {v}="{word}";'
-                replacement = v
-            elif "String to Math" in tech:
-                replacement = "string.char(" + ",".join(heavyMath(ord(c)) for c in word) + ")"
-            elif "Mixed Boolean Arithmetic" in tech:
-                mba_val = f"((({random.randint(1,2)}*{random.randint(15,84)}-{random.randint(15,84)})/({random.randint(8,47)}+1)+{random.randint(1,2)})==1 or true)"
-                replacement = f'({mba_val} and "{word}")'
-            modified = pattern.sub(lambda m, r=replacement: f"game[{r}]", modified)
-    return headers + modified
-
 # ═══════════════════════════════════════════════════════════════════════════
 # 4. ORQUESTADOR PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════
@@ -573,7 +543,10 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     # 3. Ofuscar script del usuario con 18 CAPAS DE VM
     isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
-    payloadToProtect = match.group(1) if match else detectAndApplyMappings(sourceCode)
+    
+    # ELIMINADA la función detectAndApplyMappings que rompía la sintaxis.
+    # Ahora pasamos el código tal cual, la VM lo encriptará sin romper strings ni comentarios.
+    payloadToProtect = match.group(1) if match else sourceCode
     
     final_user_script = build18xVM(payloadToProtect)
 
