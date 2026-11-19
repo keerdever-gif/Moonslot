@@ -5,7 +5,7 @@ import random
 import argparse
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. WATERMARK Y ANTI-TAMPER
+# 1. WATERMARK Y ANTI-TAMPER (Cuerpo)
 # ═══════════════════════════════════════════════════════════════════════════
 HEADER = '''--[[
   Protected by Moonslot
@@ -272,86 +272,7 @@ end
 '''
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1b. OFUSCADOR LIGERO DEL ANTI-TAMPER Y ANTI-ENV
-#     Renombra locales + encripta strings sensibles + fragmenta el while.
-#     NO usa VM, NO usa loadstring, tamaño ~1.3x. Se ejecuta en el output.
-# ═══════════════════════════════════════════════════════════════════════════
-def _mangle_locals(code: str) -> str:
-    """Renombra los identificadores `__at_*` a nombres aleatorios."""
-    names = set(re.findall(r'\b__at_[A-Za-z0-9_]+', code))
-    mapping = {}
-    for n in sorted(names, key=len, reverse=True):
-        mapping[n] = "_" + "".join(random.choice("abcdefghijklmnopqrstuvwxyz")
-                                   for _ in range(7))
-    for orig, new in mapping.items():
-        code = re.sub(r'\b' + re.escape(orig) + r'\b', new, code)
-    return code
-
-
-# Strings sensibles que deben quedar encriptados en el output.
-_SENSITIVE_STRINGS = [
-    "hookfunction", "restorefunction", "isfunctionhooked", "iscclosure",
-    "islclosure", "getrawmetatable", "getnamecallmethod", "__sc_crashed",
-    "getgenv", "loadstring", "http_request", "write_clipboard",
-    "__no_match__", "missing argument", "bad argument",
-    "Anti-Tamper", "Moonslot", "get_root_callback", "is_hook_thread",
-    "table:", "DataStoreIncrementOptions", "Frame", "Position",
-    "TweenService", "RunService", "Heartbeat", "DataStoreIncrementOptions",
-]
-
-def _encrypt_string_literal(s: str) -> str:
-    """Devuelve una expresión Lua que reconstruye la string en runtime."""
-    if len(s) <= 2:
-        return '"' + s + '"'  # demasiado corto, no vale la pena
-    # XOR simple con seed para que no sea trivialmente legible
-    seed = random.randint(1, 254)
-    enc = [ord(c) ^ seed for c in s]
-    return f'(function() local t={{}} for i=1,{len(enc)} do t[i]=string.char(bit32.bxor({seed},{ "{" + ",".join(str(x) for x in enc) + "}" }[i])) end return table.concat(t) end)()'
-
-
-def _encrypt_strings(code: str) -> str:
-    """Reemplaza los strings sensibles dentro del código por expresiones runtime."""
-    # Heurística: solo reemplaza strings EXACTOS entre comillas dobles
-    # (evita tocar patrones de string.match con regex especiales)
-    for s in _SENSITIVE_STRINGS:
-        if random.random() > 0.6:  # no encriptar todos, para no abultar
-            continue
-        lit = '"' + s + '"'
-        if lit in code:
-            enc = _encrypt_string_literal(s)
-            # Reemplaza solo 1-2 ocurrencias para no inflar
-            code = code.replace(lit, enc, random.randint(1, 2))
-    return code
-
-
-def _fragment_while_true(code: str) -> str:
-    """Fragmenta `while true do end` para que no sea grepeable."""
-    if "while true do end" not in code:
-        return code
-    def repl(m):
-        # Construye un while true equivalente usando una variable con nombre raro
-        v = "_" + "".join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(8))
-        return f"local {v}=0 while {v}==0 do end"
-    return code.replace("while true do end", repl("") if False else repl(""), 4)
-
-
-def light_obfuscate_antitamper(code: str) -> str:
-    """Pipeline ligero: mangle locals → encrypt strings → fragment while."""
-    code = _mangle_locals(code)
-    code = _encrypt_strings(code)
-    code = _fragment_while_true(code)
-    return code
-
-
-def light_obfuscate_antienv(code: str) -> str:
-    """Igual de ligero para el anti-env logger."""
-    # Fragmentar strings del anti-env (CameraMinZoomDistance, etc.) ya lo hace
-    # buildAntiEnvProtection con string.char(). Aquí solo renombramos locales.
-    return _mangle_locals(code)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. FORMAT LUA (compresión inteligente sin romper strings)
+# 2. FORMAT LUA (Compresión inteligente sin romper Strings)
 # ═══════════════════════════════════════════════════════════════════════════
 def format_lua_output(code, max_line=120):
     out = []
@@ -625,17 +546,18 @@ def getExtraProtections() -> str:
     return antiDebuggers + codeVaultGuards
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 4. ORQUESTADOR PRINCIPAL
+# 4. ORQUESTADOR PRINCIPAL (UNIFICADO)
 # ═══════════════════════════════════════════════════════════════════════════
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
-    if not sourceCode:
-        return '--ERROR'
+    if not sourceCode: return '--ERROR'
     random.seed(seed)
 
-    # ── Anti-tamper: ofuscación LIGERA (mangle + string enc + while frag) ─
-    antiTamperOut = light_obfuscate_antitamper(ANTI_TAMPER_CORE.strip())
+    # 1. Obtener el script del usuario (detectando si es un loadstring de http)
+    isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
+    match = isLoadstringRegex.search(sourceCode)
+    payloadToProtect = match.group(1) if match else detectAndApplyMappings(sourceCode)
 
-    # ── Anti-env: fragmentación actual + mangle ligero ──────────────────
+    # 2. Generar el anti-env y las protecciones adicionales
     initLine, fragmentLines, reconstructLine = buildAntiEnvProtection()
     lines = [initLine]
     for _ in range(80):
@@ -643,25 +565,31 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     for stmt in fragmentLines:
         lines.insert(random.randint(1, len(lines) - 1), stmt)
     lines.append(reconstructLine)
-    combinedJunk = light_obfuscate_antienv("\n".join(lines))
+    combinedAntiEnv = "\n".join(lines)
 
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do end end "
     extraProtections = getExtraProtections()
 
-    # ── Payload: VM normal (sin cambios) ────────────────────────────────
-    isLoadstringRegex = re.compile(
-        r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
-        re.IGNORECASE)
-    match = isLoadstringRegex.search(sourceCode)
-    payloadToProtect = match.group(1) if match else detectAndApplyMappings(sourceCode)
-    finalVM = build18xVM(payloadToProtect)
+    # 3. UNIFICAR TODO EN UN SOLO BLOQUE
+    # El anti-tamper se envuelve en una función IIFE para que el return sea local
+    # y poder llamarlo con pcall.
+    unified_payload = (
+        "local __run_at = function()\n"
+        + ANTI_TAMPER_CORE.strip() + "\n"
+        + "end\n"
+        + "pcall(__run_at)\n"
+        + combinedAntiEnv + "\n"
+        + antiDebug + "\n"
+        + extraProtections + "\n"
+        + payloadToProtect
+    )
 
+    # 4. Pasarlo TODO por la VM de Seak (crea el string encryption, el control flow flattening, etc.)
+    finalVM = build18xVM(unified_payload)
+
+    # 5. Ensamblar el output
     final_code = (
         f"{HEADER}\n\n"
-        f"{antiTamperOut}\n\n"
-        f"{combinedJunk}\n\n"
-        f"{antiDebug}\n\n"
-        f"{extraProtections}\n\n"
         f"{finalVM}"
     )
     return format_lua_output(final_code, max_line=120)
@@ -676,11 +604,9 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--min-size', type=int, default=23000)
     args = ap.parse_args()
-    with open(args.input, encoding='utf-8') as f:
-        src = f.read()
+    with open(args.input, encoding='utf-8') as f: src = f.read()
     out = obfuscate(src, seed=args.seed)
-    with open(args.output, 'w', encoding='utf-8') as f:
-        f.write(out)
+    with open(args.output, 'w', encoding='utf-8') as f: f.write(out)
 
 if __name__ == '__main__':
     main()
