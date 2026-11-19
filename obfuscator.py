@@ -252,22 +252,8 @@ if __at_code then
             e.__sc_crashed=true e.hookfunction=nil e.getrawmetatable=nil e.getnamecallmethod=nil
         end
     end)
-    local __troll=[==[
-  ⠛⠛⣿⣿⣿⣿⣿⡷⢶⣦⣶⣶⣤⣤⣤⣀
-  ⠀⠀⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡀
-  ⠀⠀⠀⠉⠉⠉⠙⠻⣿⣿⠿⠿⠛⠛⠛⠻⣿⣿⣇
-  ⠀⠀⢤⣀⣀⣀⠀⠀⢸⣷⡄⠀ ⣀⣤⣴⣿⣿⣿⣆
-  ⠀⠀⠀⠀⠹⠏⠀⠀⠀⣿⣧⠀⠹⣿⣿⣿⣿⡿⣿
-  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠿⠇⢀⣼⣿⣿⠛⢯⡿⡟
-  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠦⠴⢿⢿⣿⡿⠷⠀⣿
-  ⠀⠀⠀⠀⠀⠀⠀⠙⣷⣶⣶⣤⣤⣤⣤⣤⣶⣦⠃
-  ⠀⠀⠀⠀⠀⠀⠀⢐⣿⣾⣿⣿⣿⣿⣿⣿⣿⣿
-  ⠀⠀⠀⠀⠀⠀⠀⠈⣿⣿⣿⣿⣿⣿⣿⣿⣿⡇
-  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⢿⣿⣿⣿⣿⠟
-  Anti-Tamper — get a better environmental logger.
-  ]==]
-    if type(print) == "function" then pcall(print, __troll) end
-    while true do end
+    -- 👇 AQUÍ ESTÁ EL CAMBIO: Ahora lanza un error real en la consola en vez de congelarse.
+    error("[Moonslot Anti-Tamper] "..tostring(__at_code).." : "..tostring(__at_text), 0)
 end
 '''
 
@@ -386,22 +372,14 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 def randomName() -> str:
     return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 999))
 
-def heavyMath(n) -> str:
-    if random.random() < 0.8: return str(n)
-    a, b, c, d = random.randint(500, 3499), random.randint(2, 51), random.randint(10, 809), random.randint(2, 21)
-    return f"((((({n}+{a})*{b})/{b})-{a})+(({c}*{d})/{d})-{c})"
-
 def generateSingleJunkLine() -> str:
     r = random.random()
-    if r < 0.2: return f"local {randomName()}={heavyMath(random.randint(0, 998))} "
-    elif r < 0.35: return f"local {randomName()}=string.char({heavyMath(random.randint(0, 254))}) "
-    elif r < 0.5: return f"if not({heavyMath(1)}=={heavyMath(1)}) then local x=1 end "
+    if r < 0.2: return f"local {randomName()}={random.randint(0, 998)} "
+    elif r < 0.35: return f"local {randomName()}=\"{random.randint(0, 254)}\" "
+    elif r < 0.5: return f"if not(1==1) then local x=1 end "
     elif r < 0.7: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
     elif r < 0.85: return f'do local {randomName()}={{}} {randomName()}["_"]=1 {randomName()}=nil end '
     else: return 'if type(math.pi)=="string" then while true do end end '
-
-def generateJunk(lines: int = 100) -> str:
-    return "".join(generateSingleJunkLine() for _ in range(lines))
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
@@ -413,24 +391,25 @@ def applyCFF(blocks) -> str:
     return lua
 
 def runtimeString(s: str) -> str:
-    return "string.char(" + ",".join(str(ord(c)) for c in s) + ")"
+    return '"' + "".join(f"\\{ord(c):03d}" for c in s) + '"'
 
 def buildTrueVM(payloadStr: str) -> str:
-    STACK, KEY, ORDER, POOL = randomName(), randomName(), randomName(), randomName()
+    STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    vmCore = f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
+    
+    vmCore = f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
+    vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
+    
     chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
     
-    # 20% reduction: 1.2x multiplier instead of 1.5x
     totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks): totalChunks = len(realChunks)
     
     currentReal, globalIndex = 0, 0
 
     for i in range(1, totalChunks + 1):
-        # No more "local _mem = ..." spam. Everything goes to the POOL table directly.
         if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
             realOrder.append(i)
             chunk = realChunks[currentReal]
@@ -447,8 +426,10 @@ def buildTrueVM(payloadStr: str) -> str:
 
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar, byteVar = randomName(), randomName()
+    
     vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs({POOL}[{idxVar}]) do "
-    vmCore += f"table.insert({STACK}, string.char(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256))) _gIdx=_gIdx+1 end end "
+    vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
+    vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
     
     ASSERT = f'getgenv()[{runtimeString("assert")}]'
@@ -463,21 +444,19 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     realIdx = random.randint(0, handlerCount - 1)
     
     for i in range(handlerCount):
-        if i == realIdx: out += f"{DISPATCH}[{i+1}]=function(lM) {generateJunk(3)} {innerCode} end "
-        else: out += f"{DISPATCH}[{i+1}]=function(lM) {generateJunk(2)} return nil end "
+        if i == realIdx: out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
+        else: out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} return nil end "
         
     execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
     out += applyCFF(execBlocks)
     return out
 
 def build1xVM(payloadStr: str) -> str:
-    """1 sola capa de VM (usada para el anti-tamper para mantenerlo comprimido)"""
     vm = buildTrueVM(payloadStr)
     vm = buildSingleVM(vm, random.randint(3, 4))
     return vm
 
 def build18xVM(payloadStr: str) -> str:
-    """18 capas de VM (usada para el script del usuario)"""
     vm = buildTrueVM(payloadStr)
     for _ in range(18): 
         vm = buildSingleVM(vm, random.randint(3, 4))
@@ -488,7 +467,7 @@ def buildAntiEnvProtection():
     fragSize = 4 + random.randint(0, 2)
     fragments = [antiEnvCode[i:i + fragSize] for i in range(0, len(antiEnvCode), fragSize)]
     tableName = randomName()
-    fragmentLines = [f"{tableName}[#{tableName}+1] = string.char({','.join(str(ord(c)) for c in frag)})" for frag in fragments]
+    fragmentLines = [f"{tableName}[#{tableName}+1] = \"{''.join(f'\\{ord(c):03d}' for c in frag)}\"" for frag in fragments]
     initLine = f"local {tableName} = {{}}"
     reconstructLine = f"local _reco = table.concat({tableName}); assert(loadstring(_reco))();"
     return initLine, fragmentLines, reconstructLine
@@ -519,7 +498,6 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode: return '--ERROR'
     random.seed(seed)
 
-    # 1. Preparar bloque de protección (Anti-Tamper + Anti-Env + Anti-Debug)
     initLine, fragmentLines, reconstructLine = buildAntiEnvProtection()
     antiEnvLines = [initLine] + fragmentLines + [reconstructLine]
     antiEnvCode = "\n".join(antiEnvLines)
@@ -537,20 +515,15 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
         + extraProts
     )
 
-    # 2. Ofuscar protección con 1 SOLA VM (Comprimido)
     final_protection = build1xVM(protection_payload)
 
-    # 3. Ofuscar script del usuario con 18 CAPAS DE VM
     isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     
-    # ELIMINADA la función detectAndApplyMappings que rompía la sintaxis.
-    # Ahora pasamos el código tal cual, la VM lo encriptará sin romper strings ni comentarios.
     payloadToProtect = match.group(1) if match else sourceCode
     
     final_user_script = build18xVM(payloadToProtect)
 
-    # 4. Ensamblar output final
     final_code = (
         f"{HEADER}\n\n"
         f"{final_protection}\n"
