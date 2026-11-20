@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (Anti-Tamper 1x VM, User Script 18x VM)
+# obfuscator.py — Luau VM obfuscator (Anti-Tamper conservador + User 18x VM)
 import re
 import random
 import argparse
@@ -15,9 +15,8 @@ HEADER = '''--[[
 ANTI_TAMPER_CORE = r'''
 local __at_code, __at_text = nil, nil
 local __R = {
-    ["0x02"]="HOOKFUNCTION_SANITY_HOOK_RETURN_MISMATCH", ["0x03"]="HOOKFUNCTION_SANITY_RESTORE_RETURN_MISMATCH",
-    ["0x04"]="HOOKFUNCTION_SANITY_POINTER_MISMATCH", ["0x05"]="HOOKFUNCTION_SANITY_REHOOK_RETURN_MISMATCH",
     ["0x07"]="CRITICAL_FUNCTION_HOOKED_BOOT", ["0x09"]="CRITICAL_FUNCTION_HOOKED_RUNTIME",
+    ["0x50"]="ENV_LOGGER_HOOK_DETECTED",
 }
 local function __at_isHooked(fn)
     if type(fn) ~= "function" then return false end
@@ -26,27 +25,40 @@ local function __at_isHooked(fn)
     return ok and v == true
 end
 local function __at_checkCritical()
-    -- Solo dispara si isfunctionhooked CONFIRMA que pcall o rawget están hookeados
-    if __at_isHooked(pcall) then return "0x07" end
-    if __at_isHooked(rawget) then return "0x07" end
-    if __at_isHooked(rawset) then return "0x07" end
-    if __at_isHooked(setmetatable) then return "0x07" end
+    if type(isfunctionhooked) ~= "function" then return nil end
+    local count = 0
+    if __at_isHooked(pcall) then count = count + 1 end
+    if __at_isHooked(rawget) then count = count + 1 end
+    if __at_isHooked(rawset) then count = count + 1 end
+    if __at_isHooked(setmetatable) then count = count + 1 end
+    if count >= 2 then return "0x07" end
     return nil
 end
-local function __at_checkHooks()
-    -- Solo dispara si hookfunction/restorefunction están claramente rotos
-    if type(hookfunction) ~= "function" then return nil end
-    if type(restorefunction) ~= "function" then return nil end
-    local function probe() return 1 end
-    local ok, ret = pcall(restorefunction, probe)
-    if not ok then return "0x03" end
-    if ret ~= nil and type(ret) ~= "function" then return "0x03" end
+local function __at_checkEnvLogger()
+    local tampered = false
+    pcall(function()
+        local p = game and game.Players and game.Players.LocalPlayer
+        if not p then return end
+        local okRead, original = pcall(function() return p.CameraMinZoomDistance end)
+        if not okRead then return end
+        local testVal = -42.5
+        local okWrite = pcall(function() p.CameraMinZoomDistance = testVal end)
+        if not okWrite then return end
+        local okRead2, after = pcall(function() return p.CameraMinZoomDistance end)
+        if okRead2 and type(after) == "number" then
+            if math.abs(after - testVal) > 0.5 then
+                tampered = true
+            end
+        end
+        pcall(function() p.CameraMinZoomDistance = original end)
+    end)
+    if tampered then return "0x50" end
     return nil
 end
 local function __at_run()
     local ok, code = pcall(__at_checkCritical)
     if ok and code then return code, __R[code] or "TAMPER" end
-    ok, code = pcall(__at_checkHooks)
+    ok, code = pcall(__at_checkEnvLogger)
     if ok and code then return code, __R[code] or "TAMPER" end
     return nil, nil
 end
@@ -54,7 +66,6 @@ __at_code, __at_text = __at_run()
 
 if __at_code then
     local msg = "detect body go away"
-    -- Triple canal visible en TODOS los ejecutores y en la consola de Roblox
     pcall(function() if type(warn) == "function" then warn(msg) end end)
     pcall(function() if type(print) == "function" then print(msg) end end)
     pcall(function()
@@ -65,13 +76,12 @@ if __at_code then
             end
         end
     end)
-    -- Freeze CON YIELD (evita el sandbox execution limit)
     while true do
         local ok = pcall(function()
             if type(task) == "table" and type(task.wait) == "function" then
-                task.wait(1)
+                task.wait(0.1)
             elseif type(wait) == "function" then
-                wait(1)
+                wait(0.1)
             else
                 return false
             end
@@ -79,12 +89,11 @@ if __at_code then
         end)
         if not ok then break end
     end
-    error(msg, 0)
 end
 '''
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. FORMAT LUA (Compresión sin romper strings)
+# 2. FORMAT LUA
 # ═══════════════════════════════════════════════════════════════════════════
 def format_lua_output(code, max_line=120):
     out, buf, i, n = [], [], 0, len(code)
@@ -186,21 +195,14 @@ def runtimeString(s: str) -> str:
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    
-    # Buffer de 256 caracteres para evitar bugs de string.char en LUNR
     vmCore = f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
     vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
-    
     chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
-    
-    # Multiplicador de 1.2x para mantener el tamaño bajo
     totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks): totalChunks = len(realChunks)
-    
     currentReal, globalIndex = 0, 0
-
     for i in range(1, totalChunks + 1):
         if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
             realOrder.append(i)
@@ -215,19 +217,14 @@ def buildTrueVM(payloadStr: str) -> str:
         else:
             fakeBytes = [str(random.randint(0, 254)) for _ in range(random.randint(5, 15))]
             vmCore += f"{POOL}[{i}]={{{','.join(fakeBytes)}}} "
-
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar, byteVar = randomName(), randomName()
-    
     vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs({POOL}[{idxVar}]) do "
     vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
     vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-    
     ASSERT = f'getgenv()[{runtimeString("assert")}]'
     LOADSTRING = f'getgenv()[{runtimeString("loadstring")}]'
-    
-    # Chunk name "=" oculta el source en los tracebacks
     vmCore += f"{ASSERT}({LOADSTRING}(_e, \"=\"))() "
     return vmCore
 
@@ -255,19 +252,7 @@ def build18xVM(payloadStr: str) -> str:
         vm = buildSingleVM(vm, random.randint(3, 4))
     return vm
 
-def buildAntiEnvProtection():
-    # Anti-Env Logger: Solo salta si la propiedad falla 3 veces seguidas (bloqueo real)
-    antiEnvCode = """pcall(function() local p=game and game.Players and game.Players.LocalPlayer if not p then return end local o=pcall(function() return p.CameraMinZoomDistance end) if not o then return end local fails=0 for i=1,3 do local ok=pcall(function() p.CameraMinZoomDistance=-5 end) if not ok then fails=fails+1 end end if fails>=3 then pcall(function() local LS=game:GetService("LogService") if LS and LS.LogMessage then LS:LogMessage(3,"environment logger detected") end end) end end)"""
-    fragSize = 4 + random.randint(0, 2)
-    fragments = [antiEnvCode[i:i + fragSize] for i in range(0, len(antiEnvCode), fragSize)]
-    tableName = randomName()
-    fragmentLines = [f"{tableName}[#{tableName}+1] = \"{''.join(f'\\{ord(c):03d}' for c in frag)}\"" for frag in fragments]
-    initLine = f"local {tableName} = {{}}"
-    reconstructLine = f"local _reco = table.concat({tableName}); assert(loadstring(_reco, \"=\"))();"
-    return initLine, fragmentLines, reconstructLine
-
 def getExtraProtections() -> str:
-    # Checks ligeros que no dan falsos positivos
     return """
 pcall(function()
     if math.pi < 3.14 or math.pi > 3.15 then error("math corrupted") end
@@ -279,44 +264,29 @@ end)
 """
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 4. ORQUESTADOR PRINCIPAL
+# 4. ORQUESTADOR
 # ═══════════════════════════════════════════════════════════════════════════
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
-    
-    # 1. Preparar Anti-Env y Anti-Debug
-    initLine, fragmentLines, reconstructLine = buildAntiEnvProtection()
-    antiEnvCode = "\n".join([initLine] + fragmentLines + [reconstructLine])
-    
-    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(1) end end "
+    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections()
-    
-    # 2. Unir todo el bloque de protección
     protection_payload = (
         "local __run_at = function()\n"
         + ANTI_TAMPER_CORE.strip() + "\n"
         + "end\n"
         + "pcall(__run_at)\n"
-        + antiEnvCode + "\n"
         + antiDebug + "\n"
         + extraProts
     )
-
-    # 3. Ofuscar Protección (1 VM ligera para que no pese)
     final_protection = build1xVM(protection_payload)
-
-    # 4. Ofuscar Script del Usuario (18 VM)
     isLoadstringRegex = re.compile(
         r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
         re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     payloadToProtect = match.group(1) if match else sourceCode
-    
     final_user_script = build18xVM(payloadToProtect)
-
-    # 5. Ensamblar
     final_code = (
         f"{HEADER}\n\n"
         f"{final_protection}\n"
