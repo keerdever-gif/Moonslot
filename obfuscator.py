@@ -122,23 +122,20 @@ def applyCFF(blocks) -> str:
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
-# --- NUEVA FUNCIÓN: CONVIERTE BYTES A SÍMBOLOS LITERALES ---
 def encode_to_lua_string(data_bytes):
     s = '"'
     for b in data_bytes:
-        if b == 34: # Comilla doble
+        if b == 34: 
             s += '\\"'
-        elif b == 92: # Barra invertida
+        elif b == 92: 
             s += '\\\\'
-        elif b == 10: # Salto de línea
+        elif b == 10: 
             s += '\\n'
-        elif b == 13: # Retorno de carro
+        elif b == 13: 
             s += '\\r'
         elif 32 <= b <= 126:
-            # Si es un carácter imprimible (letras, números, símbolos), lo ponemos literal
             s += chr(b)
         else:
-            # Si es un carácter de control (invisible), lo pasamos a formato \xxx para no romper el archivo
             s += f'\\{b:03d}'
     s += '"'
     return s
@@ -166,7 +163,7 @@ def buildTrueVM(payloadStr: str) -> str:
             vmCore += f"{POOL}[{i}]={encode_to_lua_string(chunk)} "
             currentReal += 1
         else:
-            fakeBytes = [random.randint(32, 126) for _ in range(random.randint(5, 15))] # Solo símbolos imprimibles para el relleno
+            fakeBytes = [random.randint(32, 126) for _ in range(random.randint(5, 15))]
             vmCore += f"{POOL}[{i}]={encode_to_lua_string(fakeBytes)} "
             
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
@@ -273,6 +270,8 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
+    # ⬇️ AÑADIMOS ESTA LÍNEA PARA QUE EL BOT DEJE DE DAR ERROR ⬇️
+    ap.add_argument('--min-size', type=int, default=23000) 
     args = ap.parse_args()
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
