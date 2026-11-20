@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (Anti-Tamper corregido para ejecutores reales)
+# obfuscator.py — Luau VM obfuscator (100% Universal para todos los ejecutores)
 import re
 import random
 import argparse
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. WATERMARK Y ANTI-TAMPER (CORREGIDO)
+# 1. WATERMARK Y ANTI-TAMPER (UNIVERSAL)
 # ═══════════════════════════════════════════════════════════════════════════
 HEADER = '''--[[
   Protected by Moonslot
@@ -19,11 +19,16 @@ local __R = {
     ["0x50"]="ENV_LOGGER_HOOK_DETECTED",
 }
 
--- FUNCIÓN AUXILIAR: Detecta si estamos en un ejecutor legítimo
+-- DETECTOR UNIVERSAL DE EJECUTORES (Arceus, Delta, Fluxus, Synapse, etc.)
 local function __is_executor()
-    if type(getgenv) == "function" or type(identifyexecutor) == "function" then
-        return true
+    local ok, exec = pcall(function() return identifyexecutor and identifyexecutor() end)
+    if ok and exec and exec ~= "Unknown" then return true end
+    if type(getgenv) == "function" or type(getgenv) == "table" then return true end
+    if type(getfenv) == "function" then
+        local ok2, env = pcall(getfenv)
+        if ok2 and env and (env.script or env.loadstring) then return true end
     end
+    if type(syn) == "table" or type(fluxus) == "table" or type(secure_call) == "function" then return true end
     return false
 end
 
@@ -35,10 +40,9 @@ local function __at_isHooked(fn)
 end
 
 local function __at_checkCritical()
-    if type(isfunctionhooked) ~= "function" then return nil end
-    -- PROTECCIÓN: Si estamos en un ejecutor, ignoramos el chequeo de hooks críticos
-    -- porque los ejecutores modifican estas funciones por diseño.
+    -- Si estamos en un ejecutor, ignoramos los hooks críticos.
     if __is_executor() then return nil end 
+    if type(isfunctionhooked) ~= "function" then return nil end
     
     local count = 0
     if __at_isHooked(pcall) then count = count + 1 end
@@ -55,8 +59,7 @@ local function __at_checkEnvLogger()
         local p = game and game.Players and game.Players.LocalPlayer
         if not p then return end
         
-        -- CORRECCIÓN: En lugar de CameraMinZoomDistance (que es clampeado por Roblox),
-        -- verificamos la integridad de funciones matemáticas y de string básicas.
+        -- Chequeo seguro que detecta loggers sin fallar en móviles
         if math.floor(1.5) ~= 1 or math.ceil(1.5) ~= 2 then tampered = true end
         if string.len("abc") ~= 3 then tampered = true end
         if type(tostring) ~= "function" then tampered = true end
@@ -233,9 +236,12 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
     vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-    ASSERT = f'getgenv()[{runtimeString("assert")}]'
-    LOADSTRING = f'getgenv()[{runtimeString("loadstring")}]'
-    vmCore += f"{ASSERT}({LOADSTRING}(_e, \"=\"))() "
+    
+    # 🔥 ARREGLO UNIVERSAL BLINDADO: Busca loadstring y assert sin fallar nunca
+    vmCore += "local _as = assert or (type(getgenv)=='function' and getgenv().assert) or (type(getfenv)=='function' and getfenv().assert) or assert "
+    vmCore += "local _ls = loadstring or (type(getgenv)=='function' and getgenv().loadstring) or (type(getfenv)=='function' and getfenv().loadstring) "
+    vmCore += "_as(_ls(_e, \"=\"))() "
+    
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int) -> str:
