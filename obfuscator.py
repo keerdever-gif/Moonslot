@@ -89,87 +89,27 @@ if __at_code then
 end
 '''
 
-def format_lua_output(code, max_line=120):
-    out, buf, i, n = [], [], 0, len(code)
-    line_len = 0
-    st = 'normal'; lstr_close = None; lcom_close = None
-    def flush():
-        nonlocal buf, line_len
-        if buf:
-            line = ''.join(buf).rstrip()
-            if line: out.append(line)
-            buf = []; line_len = 0
-    while i < n:
-        c = code[i]
-        if st == 'dq':
-            buf.append(c); line_len += 1
-            if c == '\\' and i + 1 < n: buf.append(code[i+1]); line_len += 1; i += 2; continue
-            if c == '"': st = 'normal'
-            i += 1; continue
-        if st == 'sq':
-            buf.append(c); line_len += 1
-            if c == '\\' and i + 1 < n: buf.append(code[i+1]); line_len += 1; i += 2; continue
-            if c == "'": st = 'normal'
-            i += 1; continue
-        if st == 'lstr':
-            if code.startswith(lstr_close, i):
-                buf.append(lstr_close); line_len += len(lstr_close); i += len(lstr_close); st = 'normal'; continue
-            buf.append(c); line_len += 1
-            if c == '\n': flush()
-            i += 1; continue
-        if st == 'lcom':
-            if code.startswith(lcom_close, i):
-                buf.append(lcom_close); line_len += len(lcom_close); i += len(lcom_close); st = 'normal'; continue
-            buf.append(c); line_len += 1
-            if c == '\n': flush()
-            i += 1; continue
-        if st == 'com':
-            buf.append(c); line_len += 1
-            if c == '\n': flush(); st = 'normal'
-            i += 1; continue
-        if code.startswith('--', i):
-            m = re.match(r'--\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); lcom_close = ']' + eq + ']'
-                tok = code[i:i+3+len(eq)]; buf.append(tok); line_len += len(tok); i += len(tok); st = 'lcom'; continue
-            buf.append('--'); line_len += 2; i += 2; st = 'com'; continue
-        if c == '[':
-            m = re.match(r'\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); lstr_close = ']' + eq + ']'
-                tok = code[i:i+2+len(eq)]; buf.append(tok); line_len += len(tok); i += len(tok); st = 'lstr'; continue
-        if c == '"': st = 'dq'; buf.append(c); line_len += 1; i += 1; continue
-        if c == "'": st = 'sq'; buf.append(c); line_len += 1; i += 1; continue
-        buf.append(c); line_len += 1
-        if c == '\n': flush(); i += 1; continue
-        if line_len >= max_line:
-            if c in ';,}': flush(); i += 1; continue
-            if c == ' ': flush(); i += 1; continue
-            s = ''.join(buf)
-            idx = -1
-            for k in range(len(s)-1, -1, -1):
-                if s[k] in ' ,;': idx = k; break
-            if idx > 0 and idx > len(s) * 0.5:
-                out.append(s[:idx].rstrip()); buf = [s[idx:].lstrip()]; line_len = len(buf[0]); i += 1; continue
-        i += 1
-    flush()
-    return '\n'.join(out)
-
-_BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+def format_lua_output(code):
+    return code
 
 def randomName() -> str:
-    return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 999))
+    chars = "Il1O0o_"
+    return "_" + "".join(random.choice(chars) for _ in range(random.randint(4, 8)))
+
+def randomAsciiString(length=15):
+    chars = "!@#$%^&*()_+-=[]{}|;:',.<>?/`~€£¥©®°±×÷µ§"
+    s = "".join(random.choice(chars) for _ in range(length))
+    return s.replace('\\', '\\\\').replace('"', '\\"').replace("'", "\\'")
 
 def generateSingleJunkLine() -> str:
     r = random.random()
     if r < 0.2: return f"local {randomName()}={random.randint(0, 998)} "
-    elif r < 0.35: return f"local {randomName()}=\"{random.randint(0, 254)}\" "
-    elif r < 0.5: return f"if not(1==1) then local x=1 end "
-    elif r < 0.7: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
-    elif r < 0.85: 
+    elif r < 0.4: return f'local {randomName()}="{randomAsciiString()}" '
+    elif r < 0.6: return f"if not(1==1) then local x=1 end "
+    elif r < 0.8: 
         v = randomName()
         return f'do local {v}={{}} {v}["_"]=1 {v}=nil end '
-    else: return 'if type(math.pi)=="string" then while true do end end '
+    else: return f'if type("{randomAsciiString()}")=="string" then while true do end end '
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
@@ -182,39 +122,61 @@ def applyCFF(blocks) -> str:
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
-def runtimeString(s: str) -> str:
-    return '"' + "".join(f"\\{ord(c):03d}" for c in s) + '"'
+# --- NUEVA FUNCIÓN: CONVIERTE BYTES A SÍMBOLOS LITERALES ---
+def encode_to_lua_string(data_bytes):
+    s = '"'
+    for b in data_bytes:
+        if b == 34: # Comilla doble
+            s += '\\"'
+        elif b == 92: # Barra invertida
+            s += '\\\\'
+        elif b == 10: # Salto de línea
+            s += '\\n'
+        elif b == 13: # Retorno de carro
+            s += '\\r'
+        elif 32 <= b <= 126:
+            # Si es un carácter imprimible (letras, números, símbolos), lo ponemos literal
+            s += chr(b)
+        else:
+            # Si es un carácter de control (invisible), lo pasamos a formato \xxx para no romper el archivo
+            s += f'\\{b:03d}'
+    s += '"'
+    return s
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    vmCore = f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
-    vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
+    
+    payload_bytes = [ord(c) for c in payloadStr]
+    encrypted_bytes = [b ^ ((seed + i) & 0xFF) for i, b in enumerate(payload_bytes)]
+    
     chunkSize = 30
-    realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
+    realChunks = [encrypted_bytes[i:i + chunkSize] for i in range(0, len(encrypted_bytes), chunkSize)]
     realOrder = []
     totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks): totalChunks = len(realChunks)
+    
+    vmCore = f"local {POOL}={{}} "
     currentReal, globalIndex = 0, 0
+    
     for i in range(1, totalChunks + 1):
         if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
             realOrder.append(i)
             chunk = realChunks[currentReal]
-            encryptedBytes = []
-            for j in range(len(chunk)):
-                enc = ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF)
-                encryptedBytes.append(str(enc))
-                globalIndex += 1
-            vmCore += f"{POOL}[{i}]={{{','.join(encryptedBytes)}}} "
+            vmCore += f"{POOL}[{i}]={encode_to_lua_string(chunk)} "
             currentReal += 1
         else:
-            fakeBytes = [str(random.randint(0, 254)) for _ in range(random.randint(5, 15))]
-            vmCore += f"{POOL}[{i}]={{{','.join(fakeBytes)}}} "
+            fakeBytes = [random.randint(32, 126) for _ in range(random.randint(5, 15))] # Solo símbolos imprimibles para el relleno
+            vmCore += f"{POOL}[{i}]={encode_to_lua_string(fakeBytes)} "
+            
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
-    idxVar, byteVar = randomName(), randomName()
-    vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs({POOL}[{idxVar}]) do "
+    idxVar, charVar, byteVar = randomName(), randomName(), randomName()
+    
+    vmCore += f"for _, {idxVar} in ipairs({ORDER}) do local _s = {POOL}[{idxVar}] for {charVar}=1,#_s do "
+    vmCore += f"local {byteVar} = string.byte(_s, {charVar}) "
     vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
-    vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
+    vmCore += f"table.insert({STACK}, string.char(b)) _gIdx=_gIdx+1 end end "
+    
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
     vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
     vmCore += "local _ls = loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
@@ -222,6 +184,7 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
     vmCore += "local _ok, _res = pcall(_as, _ls(_e, \"=\")) "
     vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
+    
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int) -> str:
@@ -263,6 +226,7 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
+    
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections()
     protection_payload = (
@@ -274,25 +238,41 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
         + extraProts
     )
     final_protection = build1xVM(protection_payload)
+    
     isLoadstringRegex = re.compile(
         r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
         re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     payloadToProtect = match.group(1) if match else sourceCode
+    
     final_user_script = build18xVM(payloadToProtect)
+    
+    fake_entries = []
+    for _ in range(120): 
+        length = random.randint(5, 25)
+        s = "".join(random.choice("!@#$%^&*()_+-=[]{}|;:',.<>?/`~€£¥©®°±×÷µ§") for _ in range(length))
+        s = s.replace('\\', '\\\\').replace('"', '\\"')
+        fake_entries.append(f'"{s}"')
+    
+    fake_table_str = f"local Q={"{" + ",".join(fake_entries) + "} "}"
+    
     final_code = (
-        f"{HEADER}\n\n"
+        f"{HEADER}\n"
+        f"return(function(...)\n"
+        f"{fake_table_str}\n"
         f"{final_protection}\n"
-        f"{final_user_script}"
+        f"{final_user_script}\n"
+        f"return ...\n"
+        f"end)(getfenv and getfenv() or _ENV, getmetatable, unpack or table.unpack, {{...}}, select, newproxy, setmetatable)"
     )
-    return format_lua_output(final_code, max_line=120)
+    
+    return format_lua_output(final_code)
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--min-size', type=int, default=23000)
     args = ap.parse_args()
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
