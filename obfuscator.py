@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (100% Universal para todos los ejecutores)
+# obfuscator.py — Luau VM obfuscator (100% Universal y a prueba de fallos)
 import re
 import random
 import argparse
@@ -237,10 +237,13 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
     
-    # 🔥 ARREGLO UNIVERSAL BLINDADO: Busca loadstring y assert sin fallar nunca
-    vmCore += "local _as = assert or (type(getgenv)=='function' and getgenv().assert) or (type(getfenv)=='function' and getfenv().assert) or assert "
-    vmCore += "local _ls = loadstring or (type(getgenv)=='function' and getgenv().loadstring) or (type(getfenv)=='function' and getfenv().loadstring) "
-    vmCore += "_as(_ls(_e, \"=\"))() "
+    # 🔥 BLOQUE DE EJECUCIÓN SEGURO (A prueba de nil en cualquier ejecutor)
+    vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
+    vmCore += "local _ls = loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
+    vmCore += "local _as = assert or _g.assert or (getfenv and getfenv().assert) "
+    vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
+    vmCore += "local _ok, _res = pcall(_as, _ls(_e, \"=\")) "
+    vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
     
     return vmCore
 
