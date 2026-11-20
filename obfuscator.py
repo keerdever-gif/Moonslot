@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (Anti-Tamper conservador + User 18x VM)
+# obfuscator.py — Luau VM obfuscator (Anti-Tamper corregido para ejecutores reales)
 import re
 import random
 import argparse
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 1. WATERMARK Y ANTI-TAMPER
+# 1. WATERMARK Y ANTI-TAMPER (CORREGIDO)
 # ═══════════════════════════════════════════════════════════════════════════
 HEADER = '''--[[
   Protected by Moonslot
@@ -18,14 +18,28 @@ local __R = {
     ["0x07"]="CRITICAL_FUNCTION_HOOKED_BOOT", ["0x09"]="CRITICAL_FUNCTION_HOOKED_RUNTIME",
     ["0x50"]="ENV_LOGGER_HOOK_DETECTED",
 }
+
+-- FUNCIÓN AUXILIAR: Detecta si estamos en un ejecutor legítimo
+local function __is_executor()
+    if type(getgenv) == "function" or type(identifyexecutor) == "function" then
+        return true
+    end
+    return false
+end
+
 local function __at_isHooked(fn)
     if type(fn) ~= "function" then return false end
     if type(isfunctionhooked) ~= "function" then return false end
     local ok, v = pcall(isfunctionhooked, fn)
     return ok and v == true
 end
+
 local function __at_checkCritical()
     if type(isfunctionhooked) ~= "function" then return nil end
+    -- PROTECCIÓN: Si estamos en un ejecutor, ignoramos el chequeo de hooks críticos
+    -- porque los ejecutores modifican estas funciones por diseño.
+    if __is_executor() then return nil end 
+    
     local count = 0
     if __at_isHooked(pcall) then count = count + 1 end
     if __at_isHooked(rawget) then count = count + 1 end
@@ -34,27 +48,23 @@ local function __at_checkCritical()
     if count >= 2 then return "0x07" end
     return nil
 end
+
 local function __at_checkEnvLogger()
     local tampered = false
     pcall(function()
         local p = game and game.Players and game.Players.LocalPlayer
         if not p then return end
-        local okRead, original = pcall(function() return p.CameraMinZoomDistance end)
-        if not okRead then return end
-        local testVal = -42.5
-        local okWrite = pcall(function() p.CameraMinZoomDistance = testVal end)
-        if not okWrite then return end
-        local okRead2, after = pcall(function() return p.CameraMinZoomDistance end)
-        if okRead2 and type(after) == "number" then
-            if math.abs(after - testVal) > 0.5 then
-                tampered = true
-            end
-        end
-        pcall(function() p.CameraMinZoomDistance = original end)
+        
+        -- CORRECCIÓN: En lugar de CameraMinZoomDistance (que es clampeado por Roblox),
+        -- verificamos la integridad de funciones matemáticas y de string básicas.
+        if math.floor(1.5) ~= 1 or math.ceil(1.5) ~= 2 then tampered = true end
+        if string.len("abc") ~= 3 then tampered = true end
+        if type(tostring) ~= "function" then tampered = true end
     end)
     if tampered then return "0x50" end
     return nil
 end
+
 local function __at_run()
     local ok, code = pcall(__at_checkCritical)
     if ok and code then return code, __R[code] or "TAMPER" end
