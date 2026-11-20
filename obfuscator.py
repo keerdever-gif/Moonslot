@@ -166,7 +166,9 @@ def generateSingleJunkLine() -> str:
     elif r < 0.35: return f"local {randomName()}=\"{random.randint(0, 254)}\" "
     elif r < 0.5: return f"if not(1==1) then local x=1 end "
     elif r < 0.7: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
-    elif r < 0.85: return f'do local {randomName()}={{}} {randomName()}["_"]=1 {randomName()}=nil end '
+    elif r < 0.85: 
+        v = randomName()
+        return f'do local {v}={{}} {v}["_"]=1 {v}=nil end '
     else: return 'if type(math.pi)=="string" then while true do end end '
 
 def applyCFF(blocks) -> str:
