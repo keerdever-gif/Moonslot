@@ -89,189 +89,209 @@ if __at_code then
 end
 '''
 
-def format_lua_output(code):
-    return code
+def format_lua_output(code, max_line=1000):
+    code = re.sub(r'[ \t]+', ' ', code)
+    code = re.sub(r'\n+', '\n', code)
+    out, buf, line_len = [], [], 0
+    for line in code.split('\n'):
+        line = line.strip()
+        if not line: continue
+        if line_len + len(line) > max_line:
+            out.append(' '.join(buf))
+            buf = [line]
+            line_len = len(line)
+        else:
+            buf.append(line)
+            line_len += len(line) + 1
+    if buf: out.append(' '.join(buf))
+    return '\n'.join(out)
+
+_BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
-    chars = "Il1O0o_"
-    return "_" + "".join(random.choice(chars) for _ in range(random.randint(4, 8)))
+    return "_" + "".join(random.choice(_BASE36) for _ in range(4)) + str(random.randint(0, 99))
 
-def randomAsciiString(length=15):
-    chars = "!@#$%^&*()_+-=[]{}|;:',.<>?/`~€£¥©®°±×÷µ§"
-    s = "".join(random.choice(chars) for _ in range(length))
-    return s.replace('\\', '\\\\').replace('"', '\\"').replace("'", "\\'")
+def escape_lua_string(s: str) -> str:
+    s = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '')
+    return f'"{s}"'
 
-def generateSingleJunkLine() -> str:
-    r = random.random()
-    if r < 0.2: return f"local {randomName()}={random.randint(0, 998)} "
-    elif r < 0.4: return f'local {randomName()}="{randomAsciiString()}" '
-    elif r < 0.6: return f"if not(1==1) then local x=1 end "
-    elif r < 0.8: 
-        v = randomName()
-        return f'do local {v}={{}} {v}["_"]=1 {v}=nil end '
-    else: return f'if type("{randomAsciiString()}")=="string" then while true do end end '
+# --- TÉCNICAS DE OFUSCACIÓN ---
 
-def applyCFF(blocks) -> str:
-    stateVar = randomName()
-    n = len(blocks)
-    states = random.sample(range(1000, 99999), n + 1)
-    lua = f"local {stateVar}={states[0]} while true do "
-    for i, block in enumerate(blocks):
-        prefix = "if" if i == 0 else "elseif"
-        lua += f"{prefix} {stateVar}=={states[i]} then {block} {stateVar}={states[i+1]} "
-    lua += f"elseif {stateVar}=={states[n]} then break end end "
-    return lua
-
-def encode_to_lua_string(data_bytes):
-    s = '"'
-    for b in data_bytes:
-        if b == 34: 
-            s += '\\"'
-        elif b == 92: 
-            s += '\\\\'
-        elif b == 10: 
-            s += '\\n'
-        elif b == 13: 
-            s += '\\r'
-        elif 32 <= b <= 126:
-            s += chr(b)
+def layer_math_obfuscation(code, percentage=0.15):
+    """Math Obfuscation dinámico: Reemplaza el % especificado de números"""
+    strings = []
+    def save_string(m):
+        strings.append(m.group(0))
+        return f"__STR_{len(strings)-1}__"
+    
+    code_no_str = re.sub(r'"[^"]*"|\'[^\']*\'|\[\[.*?\]\]', save_string, code)
+    numbers = list(re.finditer(r'(?<![\w.])(\d+)(?![\w.])', code_no_str))
+    
+    if not numbers:
+        return code
+        
+    num_to_replace = max(1, int(len(numbers) * percentage))
+    to_replace = random.sample(numbers, num_to_replace)
+    to_replace.sort(key=lambda m: m.start(), reverse=True)
+    
+    code_list = list(code_no_str)
+    for m in to_replace:
+        num = int(m.group(0))
+        style = random.choice([1, 2, 3])
+        
+        if style == 1:
+            eq = f"({num} + 0)"
+        elif style == 2:
+            eq = f"({num} - 0)"
         else:
-            s += f'\\{b:03d}'
-    s += '"'
-    return s
+            if num > 1:
+                a = random.randint(1, num - 1)
+                eq = f"({a} + {num - a})"
+            else:
+                eq = f"({num} * 1)"
+                
+        code_list[m.start():m.end()] = list(eq)
+        
+    code_obf = "".join(code_list)
+    
+    for i, s in enumerate(strings):
+        code_obf = code_obf.replace(f"__STR_{i}__", s)
+        
+    return code_obf
 
-def buildTrueVM(payloadStr: str) -> str:
-    STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
+def layer_string_fragmentation(code):
+    chunk_size = 80
+    chunks = [code[i:i+chunk_size] for i in range(0, len(code), chunk_size)]
+    frags = [escape_lua_string(c) for c in chunks]
+    return f"local _s={ '..'.join(frags) } "
+
+def layer_stack_obfuscation(code):
+    v1, v2 = randomName(), randomName()
+    return f"local function {v1}(f) local o,e=pcall(f) if not o then return nil end return true end local {v2}=function() {code} end {v1}({v2}) "
+
+def layer_metamethod_hiding(code):
+    tbl, mt = randomName(), randomName()
+    return f"local {mt}={{__call=function(s,...) local f=function() {code} end f() end}} local {tbl}=setmetatable({{}},{mt}) {tbl}() "
+
+def layer_memory_confusion(code):
+    garbage = randomName()
+    return f"local {garbage}={{}} for i=1,500 do {garbage}[i]=string.rep('A',i) end {garbage}=nil collectgarbage() {code} "
+
+def layer_antidebugging(code):
+    v1 = randomName()
+    return f"local {v1}=tick() for _=1,3000 do end if tick()-{v1}>0.5 then while true do end end {code} "
+
+def layer_dynamic_generation(code):
+    s = randomName()
+    return f"local {s}=function() {code} end local _ls=loadstring or getgenv().loadstring _ls('return ('..tostring({s})..')')()() "
+
+def buildBytecodeEmulation(payloadStr: str) -> str:
+    POOL, KEY, ORDER, STACK = randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    
-    payload_bytes = [ord(c) for c in payloadStr]
-    encrypted_bytes = [b ^ ((seed + i) & 0xFF) for i, b in enumerate(payload_bytes)]
-    
-    chunkSize = 30
-    realChunks = [encrypted_bytes[i:i + chunkSize] for i in range(0, len(encrypted_bytes), chunkSize)]
+    chunkSize = 40
+    realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
     totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks): totalChunks = len(realChunks)
-    
-    vmCore = f"local {POOL}={{}} "
     currentReal, globalIndex = 0, 0
-    
+
+    vmCore = f"local {POOL}={{}} "
     for i in range(1, totalChunks + 1):
         if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
             realOrder.append(i)
             chunk = realChunks[currentReal]
-            vmCore += f"{POOL}[{i}]={encode_to_lua_string(chunk)} "
+            hexBytes = []
+            for j in range(len(chunk)):
+                b = ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF)
+                hexBytes.append(f"{b:02x}")
+                globalIndex += 1
+            vmCore += f'{POOL}[{i}]="{("".join(hexBytes))}" '
             currentReal += 1
         else:
-            fakeBytes = [random.randint(32, 126) for _ in range(random.randint(5, 15))]
-            vmCore += f"{POOL}[{i}]={encode_to_lua_string(fakeBytes)} "
-            
+            fakeHex = ''.join(f"{random.randint(0,255):02x}" for _ in range(random.randint(10, 30)))
+            vmCore += f'{POOL}[{i}]="{fakeHex}" '
+
+    gi, oi, cv, dv = randomName(), randomName(), randomName(), randomName()
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
-    idxVar, charVar, byteVar = randomName(), randomName(), randomName()
-    
-    vmCore += f"for _, {idxVar} in ipairs({ORDER}) do local _s = {POOL}[{idxVar}] for {charVar}=1,#_s do "
-    vmCore += f"local {byteVar} = string.byte(_s, {charVar}) "
-    vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
-    vmCore += f"table.insert({STACK}, string.char(b)) _gIdx=_gIdx+1 end end "
-    
-    vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-    vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
-    vmCore += "local _ls = loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
-    vmCore += "local _as = assert or _g.assert or (getfenv and getfenv().assert) "
-    vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
-    vmCore += "local _ok, _res = pcall(_as, _ls(_e, \"=\")) "
-    vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
-    
+    vmCore += f"local {STACK}={{}} local {gi}=0 "
+    vmCore += f"for _,{oi} in ipairs({ORDER}) do "
+    vmCore += f"local {cv}={POOL}[{oi}] "
+    vmCore += f"local {dv}={cv}:gsub('%x%x',function(h) local b=bit32.bxor(tonumber(h,16),(({KEY}+{gi})%256)) {gi}={gi}+1 return string.char(b) end) "
+    vmCore += f"table.insert({STACK},{dv}) end "
+    vmCore += f"local _e=table.concat({STACK}) {STACK}=nil "
+    vmCore += "local _g=(getgenv and type(getgenv)=='function') and getgenv() or {} "
+    vmCore += "local _ls=loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
+    vmCore += "local _ok,_res=pcall(_ls,_e,\"=\") "
+    vmCore += "if _ok then _res() end "
     return vmCore
 
-def buildSingleVM(innerCode: str, handlerCount: int) -> str:
-    DISPATCH = randomName()
-    out = f"local {DISPATCH}={{}} "
-    realIdx = random.randint(0, handlerCount - 1)
-    for i in range(handlerCount):
-        if i == realIdx:
-            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
-        else:
-            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
-    execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
-    out += applyCFF(execBlocks)
-    return out
-
-def build1xVM(payloadStr: str) -> str:
-    vm = buildTrueVM(payloadStr)
-    vm = buildSingleVM(vm, random.randint(3, 4))
+def layer_function_splitting_and_deadcode(code, iterations=1):
+    vm = code
+    for _ in range(iterations):
+        DISPATCH = randomName()
+        handlerCount = random.randint(3, 4)
+        realIdx = random.randint(0, handlerCount - 1)
+        out = f"local {DISPATCH}={{}} "
+        
+        for i in range(handlerCount):
+            if i == realIdx:
+                out += f"{DISPATCH}[{i+1}]=function(lM) if(math.random()>2)then local _z=1 while _z==1 do end end {vm} end "
+            else:
+                out += f"{DISPATCH}[{i+1}]=function(lM) if type(nil)=='table' then local q={{}} q[1]=1 end return nil end "
+                
+        stateVar = randomName()
+        states = random.sample(range(1000, 99999), handlerCount + 1)
+        out += f"local {stateVar}={states[0]} while true do "
+        for i in range(handlerCount):
+            prefix = "if" if i == 0 else "elseif"
+            out += f"{prefix} {stateVar}=={states[i]} then {DISPATCH}[{i+1}]({{}}) {stateVar}={states[i+1]} "
+        out += f"elseif {stateVar}=={states[handlerCount]} then break end end "
+        
+        vm = out
     return vm
 
-def build18xVM(payloadStr: str) -> str:
-    vm = buildTrueVM(payloadStr)
-    for _ in range(18):
-        vm = buildSingleVM(vm, random.randint(3, 4))
-    return vm
+def apply_all_layers(payload_str, iterations=1, math_percent=0.15):
+    """Aplica las capas y permite controlar iteraciones y Math %"""
+    payload = buildBytecodeEmulation(payload_str)
+    
+    for _ in range(iterations):
+        payload = layer_string_fragmentation(payload)
+        payload = layer_function_splitting_and_deadcode(payload, iterations=1)
+        payload = layer_math_obfuscation(payload, percentage=math_percent) # <-- Aquí se aplica el %
+        payload = layer_stack_obfuscation(payload)
+        payload = layer_metamethod_hiding(payload)
+        payload = layer_antidebugging(payload)
+        payload = layer_dynamic_generation(payload)
+        payload = layer_memory_confusion(payload)
+        
+    return payload
 
 def getExtraProtections() -> str:
-    return """
-pcall(function()
-    if math.pi < 3.14 or math.pi > 3.15 then error("math corrupted") end
-    if type(tostring) ~= "function" then error("tostring missing") end
-    if type(pcall) ~= "function" then error("pcall missing") end
-    if string.len("a") ~= 1 then error("string.len broken") end
-    if math.floor(-1/10) ~= -1 then error("math.floor broken") end
-end)
-"""
+    return "pcall(function() if math.pi<3.14 or math.pi>3.15 then error('math') end end) "
 
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
-    if not sourceCode:
-        return '--ERROR'
+    if not sourceCode: return '--ERROR'
     random.seed(seed)
     
-    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
-    extraProts = getExtraProtections()
-    protection_payload = (
-        "local __run_at = function()\n"
-        + ANTI_TAMPER_CORE.strip() + "\n"
-        + "end\n"
-        + "pcall(__run_at)\n"
-        + antiDebug + "\n"
-        + extraProts
-    )
-    final_protection = build1xVM(protection_payload)
+    protection_payload = "local __run=function() " + ANTI_TAMPER_CORE.strip() + " end pcall(__run) " + getExtraProtections()
+    # Anti-tamper: 2 iteraciones (Peso ~18 KB)
+    final_protection = apply_all_layers(protection_payload, iterations=2, math_percent=0.10)
     
-    isLoadstringRegex = re.compile(
-        r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
-        re.IGNORECASE)
+    isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     payloadToProtect = match.group(1) if match else sourceCode
     
-    final_user_script = build18xVM(payloadToProtect)
+    # Script User: 1 iteración pero con 15% de math (Peso ~12 KB para un script de 1 KB)
+    final_user_script = apply_all_layers(payloadToProtect, iterations=1, math_percent=0.15)
     
-    fake_entries = []
-    for _ in range(120): 
-        length = random.randint(5, 25)
-        s = "".join(random.choice("!@#$%^&*()_+-=[]{}|;:',.<>?/`~€£¥©®°±×÷µ§") for _ in range(length))
-        s = s.replace('\\', '\\\\').replace('"', '\\"')
-        fake_entries.append(f'"{s}"')
-    
-    fake_table_str = f"local Q={"{" + ",".join(fake_entries) + "} "}"
-    
-    final_code = (
-        f"{HEADER}\n"
-        f"return(function(...)\n"
-        f"{fake_table_str}\n"
-        f"{final_protection}\n"
-        f"{final_user_script}\n"
-        f"return ...\n"
-        f"end)(getfenv and getfenv() or _ENV, getmetatable, unpack or table.unpack, {{...}}, select, newproxy, setmetatable)"
-    )
-    
-    return format_lua_output(final_code)
+    final_code = f"{HEADER}\n{final_protection}\n{final_user_script}"
+    return format_lua_output(final_code, max_line=1000)
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    # ⬇️ AÑADIMOS ESTA LÍNEA PARA QUE EL BOT DEJE DE DAR ERROR ⬇️
-    ap.add_argument('--min-size', type=int, default=23000) 
     args = ap.parse_args()
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
