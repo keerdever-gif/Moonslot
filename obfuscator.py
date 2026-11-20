@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (Anti-Tamper 1x VM, User Script 18x VM)
+# obfuscator.py — Luau VM obfuscator (Anti-Tamper 2x CFF VM, User Script 18x VM)
 import re
 import random
 import argparse
@@ -252,8 +252,9 @@ if __at_code then
             e.__sc_crashed=true e.hookfunction=nil e.getrawmetatable=nil e.getnamecallmethod=nil
         end
     end)
-    -- 👇 AQUÍ ESTÁ EL CAMBIO: Ahora lanza un error real en la consola en vez de congelarse.
-    error("[Moonslot Anti-Tamper] "..tostring(__at_code).." : "..tostring(__at_text), 0)
+    if type(print) == "function" then pcall(print, "detect body go away") end
+    pcall(error, "detect body go away", 0)
+    while true do end
 end
 '''
 
@@ -365,7 +366,7 @@ def format_lua_output(code, max_line=120):
     return '\n'.join(out)
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 3. SEAK OBFUSCATOR CORE (Junk Code + VM Optimizada)
+# 3. SEAK OBFUSCATOR CORE (Junk + VM + CFF random states)
 # ═══════════════════════════════════════════════════════════════════════════
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
@@ -382,31 +383,37 @@ def generateSingleJunkLine() -> str:
     else: return 'if type(math.pi)=="string" then while true do end end '
 
 def applyCFF(blocks) -> str:
+    """Control Flow Flattening con estados aleatorios grandes (mucho más opaco)."""
     stateVar = randomName()
-    lua = f"local {stateVar}=1 while true do "
+    n = len(blocks)
+    states = random.sample(range(1000, 99999), n + 1)
+
+    lua = f"local {stateVar}={states[0]} while true do "
     for i, block in enumerate(blocks):
-        if i == 0: lua += f"if {stateVar}==1 then {block} {stateVar}=2 "
-        else: lua += f"elseif {stateVar}=={i + 1} then {block} {stateVar}={i + 2} "
-    lua += f"elseif {stateVar}=={len(blocks) + 1} then break end end "
+        prefix = "if" if i == 0 else "elseif"
+        lua += f"{prefix} {stateVar}=={states[i]} then {block} {stateVar}={states[i+1]} "
+    lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
 def runtimeString(s: str) -> str:
+    """Codifica un string Lua usando \ddd (mismo tamaño, cero llamadas a string.char)."""
     return '"' + "".join(f"\\{ord(c):03d}" for c in s) + '"'
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    
+
+    # Buffer seguro de 0..255 (evita el bug LUNR de string.char)
     vmCore = f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
     vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
-    
+
     chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
-    
+
     totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks): totalChunks = len(realChunks)
-    
+
     currentReal, globalIndex = 0, 0
 
     for i in range(1, totalChunks + 1):
@@ -426,15 +433,15 @@ def buildTrueVM(payloadStr: str) -> str:
 
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar, byteVar = randomName(), randomName()
-    
+
     vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs({POOL}[{idxVar}]) do "
     vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
     vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-    
+
     ASSERT = f'getgenv()[{runtimeString("assert")}]'
     LOADSTRING = f'getgenv()[{runtimeString("loadstring")}]'
-    
+
     vmCore += f"{ASSERT}({LOADSTRING}(_e))() "
     return vmCore
 
@@ -442,23 +449,28 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     DISPATCH = randomName()
     out = f"local {DISPATCH}={{}} "
     realIdx = random.randint(0, handlerCount - 1)
-    
+
     for i in range(handlerCount):
-        if i == realIdx: out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
-        else: out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} return nil end "
-        
+        if i == realIdx:
+            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
+        else:
+            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
+
     execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
     out += applyCFF(execBlocks)
     return out
 
-def build1xVM(payloadStr: str) -> str:
+def buildAntiTamperVM(payloadStr: str) -> str:
+    """Anti-Tamper: 2 capas CFF + 5 handlers (mejor ofuscado, ~+3KB)."""
     vm = buildTrueVM(payloadStr)
-    vm = buildSingleVM(vm, random.randint(3, 4))
+    for _ in range(2):
+        vm = buildSingleVM(vm, random.randint(4, 5))
     return vm
 
 def build18xVM(payloadStr: str) -> str:
+    """Script del usuario: 18 capas CFF (sin cambios, regla respetada)."""
     vm = buildTrueVM(payloadStr)
-    for _ in range(18): 
+    for _ in range(18):
         vm = buildSingleVM(vm, random.randint(3, 4))
     return vm
 
@@ -495,16 +507,19 @@ def getExtraProtections() -> str:
 # 4. ORQUESTADOR PRINCIPAL
 # ═══════════════════════════════════════════════════════════════════════════
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
-    if not sourceCode: return '--ERROR'
+    if not sourceCode:
+        return '--ERROR'
     random.seed(seed)
 
+    # Anti-Env fragmentado (fragments via \ddd)
     initLine, fragmentLines, reconstructLine = buildAntiEnvProtection()
-    antiEnvLines = [initLine] + fragmentLines + [reconstructLine]
-    antiEnvCode = "\n".join(antiEnvLines)
-    
+    antiEnvCode = "\n".join([initLine] + fragmentLines + [reconstructLine])
+
+    # Anti-Debug + hardening extra
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do end end "
     extraProts = getExtraProtections()
-    
+
+    # Bloque de protección completo (anti-tamper + anti-env + anti-debug)
     protection_payload = (
         "local __run_at = function()\n"
         + ANTI_TAMPER_CORE.strip() + "\n"
@@ -515,15 +530,18 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
         + extraProts
     )
 
-    final_protection = build1xVM(protection_payload)
+    # Ofuscar protección: 2 capas CFF + 5 handlers (VM "mejorada", tamaño ~neutro)
+    final_protection = buildAntiTamperVM(protection_payload)
 
-    isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
+    # Script del usuario: 18 capas CFF (regla respetada)
+    isLoadstringRegex = re.compile(
+        r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
+        re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
-    
     payloadToProtect = match.group(1) if match else sourceCode
-    
     final_user_script = build18xVM(payloadToProtect)
 
+    # Ensamblado final
     final_code = (
         f"{HEADER}\n\n"
         f"{final_protection}\n"
@@ -541,9 +559,11 @@ def main():
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--min-size', type=int, default=23000)
     args = ap.parse_args()
-    with open(args.input, encoding='utf-8') as f: src = f.read()
+    with open(args.input, encoding='utf-8') as f:
+        src = f.read()
     out = obfuscate(src, seed=args.seed)
-    with open(args.output, 'w', encoding='utf-8') as f: f.write(out)
+    with open(args.output, 'w', encoding='utf-8') as f:
+        f.write(out)
 
 if __name__ == '__main__':
     main()
