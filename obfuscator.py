@@ -3,36 +3,48 @@ import random
 import argparse
 
 HEADER = '''--[[
-  Protected by Moonslot
+  Protected by Moonslot - Extreme Obfuscation
   Unauthorized reproduction or distribution is prohibited.
 ]]'''
 
+# ANTI-TAMPER CORE: Ofuscado con String Fragmentation
 ANTI_TAMPER_CORE = r'''
 local __at_code, __at_text = nil, nil
-local __R = {
-    ["0x07"]="CRITICAL_FUNCTION_HOOKED_BOOT", ["0x09"]="CRITICAL_FUNCTION_HOOKED_RUNTIME",
-    ["0x50"]="ENV_LOGGER_HOOK_DETECTED",
-}
+local _s = function(...) return table.concat({...}) end
+local __R = setmetatable({}, {
+    __index = function(t, k)
+        local v = {
+            ["0x07"] = _s("CRIT", "ICAL_FUN", "CTION_HOOK", "ED_BOOT"),
+            ["0x09"] = _s("CRIT", "ICAL_FUN", "CTION_HOOK", "ED_RUNTIME"),
+            ["0x50"] = _s("ENV_LOG", "GER_HOOK_", "DETECTED"),
+        }
+        return v[k]
+    end
+})
 local function __is_executor()
-    local ok, exec = pcall(function() return identifyexecutor and identifyexecutor() end)
-    if ok and exec and exec ~= "Unknown" then return true end
-    if type(getgenv) == "function" or type(getgenv) == "table" then return true end
-    if type(getfenv) == "function" then
-        local ok2, env = pcall(getfenv)
+    local e1 = _s("ident", "ifyexec", "utor")
+    local e2 = _s("getg", "env")
+    local ok, exec = pcall(function() return _G[e1] and _G[e1]() end)
+    if ok and exec and exec ~= _s("Unk", "nown") then return true end
+    if type(_G[e2]) == "function" or type(_G[e2]) == "table" then return true end
+    if type(_G[_s("getf", "env")]) == "function" then
+        local ok2, env = pcall(_G[_s("getf", "env")])
         if ok2 and env and (env.script or env.loadstring) then return true end
     end
-    if type(syn) == "table" or type(fluxus) == "table" or type(secure_call) == "function" then return true end
+    if type(_G[_s("s", "yn")]) == "table" or type(_G[_s("se", "cure_call")]) == "function" then return true end
     return false
 end
 local function __at_isHooked(fn)
     if type(fn) ~= "function" then return false end
-    if type(isfunctionhooked) ~= "function" then return false end
-    local ok, v = pcall(isfunctionhooked, fn)
+    local ishook = _G[_s("isfunc", "tionhoo", "ked")]
+    if type(ishook) ~= "function" then return false end
+    local ok, v = pcall(ishook, fn)
     return ok and v == true
 end
 local function __at_checkCritical()
     if __is_executor() then return nil end 
-    if type(isfunctionhooked) ~= "function" then return nil end
+    local ishook = _G[_s("isfunc", "tionhoo", "ked")]
+    if type(ishook) ~= "function" then return nil end
     local count = 0
     if __at_isHooked(pcall) then count = count + 1 end
     if __at_isHooked(rawget) then count = count + 1 end
@@ -55,14 +67,14 @@ local function __at_checkEnvLogger()
 end
 local function __at_run()
     local ok, code = pcall(__at_checkCritical)
-    if ok and code then return code, __R[code] or "TAMPER" end
+    if ok and code then return code, __R[code] or _s("TAM", "PER") end
     ok, code = pcall(__at_checkEnvLogger)
-    if ok and code then return code, __R[code] or "TAMPER" end
+    if ok and code then return code, __R[code] or _s("TAM", "PER") end
     return nil, nil
 end
 __at_code, __at_text = __at_run()
 if __at_code then
-    local msg = "detect body go away"
+    local msg = _s("detect ", "body go ", "away")
     pcall(function() if type(warn) == "function" then warn(msg) end end)
     pcall(function() if type(print) == "function" then print(msg) end end)
     pcall(function()
@@ -162,14 +174,17 @@ def randomName() -> str:
 
 def generateSingleJunkLine() -> str:
     r = random.random()
-    if r < 0.2: return f"local {randomName()}={random.randint(0, 998)} "
-    elif r < 0.35: return f"local {randomName()}=\"{random.randint(0, 254)}\" "
-    elif r < 0.5: return f"if not(1==1) then local x=1 end "
-    elif r < 0.7: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
-    elif r < 0.85: 
+    if r < 0.15: return f"local {randomName()}={random.randint(0, 998)} "
+    elif r < 0.3: return f"local {randomName()}=\"{random.randint(0, 254)}\" "
+    elif r < 0.4: return f"if not(1==1) then local x=1 end "
+    elif r < 0.55: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
+    elif r < 0.7: 
         v = randomName()
         return f'do local {v}={{}} {v}["_"]=1 {v}=nil end '
-    else: return 'if type(math.pi)=="string" then while true do end end '
+    elif r < 0.8: return 'if type(math.pi)=="string" then while true do end end '
+    elif r < 0.9: return 'if debug and debug.sethook then pcall(function() debug.sethook() end) end '
+    else: 
+        return f'local {randomName()}={{}} for i=1,500 do {randomName()}[i]=string.rep("x",50) end {randomName()}=nil pcall(collectgarbage) '
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
@@ -188,7 +203,8 @@ def runtimeString(s: str) -> str:
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
-    vmCore = f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
+    vmCore = f"local _opcodes={{'ADD','SUB','MOV','JMP','CALL'}} local _ = _opcodes[math.random(1,5)] "
+    vmCore += f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
     vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
     chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
@@ -217,22 +233,26 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
     vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
-    vmCore += "local _ls = loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
-    vmCore += "local _as = assert or _g.assert or (getfenv and getfenv().assert) "
+    vmCore += "local _loaders = {loadstring, load, _g.loadstring, (getfenv and getfenv().loadstring)} "
+    vmCore += "local _ls = nil for _,l in ipairs(_loaders) do if type(l)=='function' then _ls=l break end end "
     vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
-    vmCore += "local _ok, _res = pcall(_as, _ls(_e, \"=\")) "
+    vmCore += "local _ok, _res = pcall(_ls, _e, \"=\") "
     vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     DISPATCH = randomName()
-    out = f"local {DISPATCH}={{}} "
+    STORE = randomName()
+    MT = randomName()
+    out = f"local {STORE}={{}} local {MT}={{}} {MT}.__index=function(t,k) return {STORE}[k] end local {DISPATCH}=setmetatable({{}},{MT}) "
+    
     realIdx = random.randint(0, handlerCount - 1)
     for i in range(handlerCount):
         if i == realIdx:
-            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
+            out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
         else:
-            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
+            out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
+            
     execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
     out += applyCFF(execBlocks)
     return out
@@ -248,6 +268,12 @@ def build18xVM(payloadStr: str) -> str:
         vm = buildSingleVM(vm, random.randint(3, 4))
     return vm
 
+def buildStackObfuscation(code: str) -> str:
+    nested = code
+    for _ in range(random.randint(2, 5)):
+        nested = f"(function() pcall(function() {nested} end) end)()"
+    return nested
+
 def getExtraProtections() -> str:
     return """
 pcall(function()
@@ -259,30 +285,89 @@ pcall(function()
 end)
 """
 
+# NUEVO: Función para dividir en exactamente N partes
+def split_string(s, num_parts=100):
+    n = len(s)
+    if n < num_parts:
+        s = s + " " * (num_parts - n)
+        n = len(s)
+    
+    base_len = n // num_parts
+    remainder = n % num_parts
+    
+    parts = []
+    start = 0
+    for i in range(num_parts):
+        length = base_len + (1 if i < remainder else 0)
+        parts.append(s[start:start+length])
+        start += length
+    return parts
+
+def build_fragmented_payload(code_str, num_parts=100):
+    # 1. Fragmentar el código en 100 partes exactas
+    parts = split_string(code_str, num_parts)
+    
+    # 2. Generar las variables con cada fragmento (Fuera de la tabla de bytes gigante)
+    part_decls = ""
+    args = []
+    for i, p in enumerate(parts):
+        var_name = f"_{randomName()}"
+        # Escapar caracteres especiales para Lua
+        escaped_p = p.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
+        part_decls += f'local {var_name} = "{escaped_p}"\n'
+        args.append(var_name)
+        
+    # 3. Lógica que junta y ejecuta, esta será ofuscada por las 18 VMs
+    lua_logic = """
+    local function _join_and_run(...)
+        local args = {...}
+        local full_str = table.concat(args)
+        local loader = loadstring or load
+        if loader then
+            local ok, res = pcall(loader, full_str)
+            if ok and res then pcall(res) end
+        end
+    end
+    return _join_and_run
+    """
+    
+    # Ofuscar la lógica de unión con las 18 capas de VM
+    obfuscated_logic = build18xVM(lua_logic)
+    
+    # 4. Construir el ensamblaje final
+    caller = f"local _f = {obfuscated_logic}\n_f({', '.join(args)})\n"
+    return part_decls + "\n" + caller
+
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
+    
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections()
-    protection_payload = (
-        "local __run_at = function()\n"
-        + ANTI_TAMPER_CORE.strip() + "\n"
-        + "end\n"
-        + "pcall(__run_at)\n"
-        + antiDebug + "\n"
-        + extraProts
-    )
-    final_protection = build1xVM(protection_payload)
+    
+    # Juntamos el Anti-Tamper y Anti-Env Logger
+    protection_payload = antiDebug + "\n" + extraProts + "\n" + ANTI_TAMPER_CORE
+    
+    # 1. Aplicar la fragmentación en 100 partes al Anti-Tamper
+    anti_tamper_final = build_fragmented_payload(protection_payload, 100)
+    
+    # 2. Preparar el script del usuario
     isLoadstringRegex = re.compile(
         r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
         re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     payloadToProtect = match.group(1) if match else sourceCode
+
+    # El script del usuario también pasa por las 18 VMs para su protección
     final_user_script = build18xVM(payloadToProtect)
+    final_user_script = buildStackObfuscation(final_user_script)
+    
     final_code = (
         f"{HEADER}\n\n"
-        f"{final_protection}\n"
+        f"-- Memory Confusion\n"
+        f"local _mc = {{}} for i=1,3000 do _mc[i] = string.rep('X', 50) end _mc = nil pcall(collectgarbage)\n"
+        f"{anti_tamper_final}\n"
         f"{final_user_script}"
     )
     return format_lua_output(final_code, max_line=120)
