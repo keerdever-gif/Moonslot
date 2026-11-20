@@ -7,7 +7,6 @@ HEADER = '''--[[
   Unauthorized reproduction or distribution is prohibited.
 ]]'''
 
-# ANTI-TAMPER CORE: Ofuscado con String Fragmentation
 ANTI_TAMPER_CORE = r'''
 local __at_code, __at_text = nil, nil
 local _s = function(...) return table.concat({...}) end
@@ -186,6 +185,15 @@ def generateSingleJunkLine() -> str:
     else: 
         return f'local {randomName()}={{}} for i=1,500 do {randomName()}[i]=string.rep("x",50) end {randomName()}=nil pcall(collectgarbage) '
 
+# NUEVO: Generador de basura para hacer la "sopa" de variables
+def generate_soup_junk() -> str:
+    r = random.random()
+    if r < 0.2: return "local _x = math.random(1,100) "
+    elif r < 0.4: return "if _G then _G._dummy = 1 end "
+    elif r < 0.6: return "for _i=1,5 do local _y = _i * 2 end "
+    elif r < 0.8: return "pcall(function() return string.rep('a', 10) end) "
+    else: return "local _t = setmetatable({}, {__index = function() return 1 end}) "
+
 def applyCFF(blocks) -> str:
     stateVar = randomName()
     n = len(blocks)
@@ -196,9 +204,6 @@ def applyCFF(blocks) -> str:
         lua += f"{prefix} {stateVar}=={states[i]} then {block} {stateVar}={states[i+1]} "
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
-
-def runtimeString(s: str) -> str:
-    return '"' + "".join(f"\\{ord(c):03d}" for c in s) + '"'
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
@@ -245,22 +250,15 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     STORE = randomName()
     MT = randomName()
     out = f"local {STORE}={{}} local {MT}={{}} {MT}.__index=function(t,k) return {STORE}[k] end local {DISPATCH}=setmetatable({{}},{MT}) "
-    
     realIdx = random.randint(0, handlerCount - 1)
     for i in range(handlerCount):
         if i == realIdx:
             out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
         else:
             out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
-            
     execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
     out += applyCFF(execBlocks)
     return out
-
-def build1xVM(payloadStr: str) -> str:
-    vm = buildTrueVM(payloadStr)
-    vm = buildSingleVM(vm, random.randint(3, 4))
-    return vm
 
 def build18xVM(payloadStr: str) -> str:
     vm = buildTrueVM(payloadStr)
@@ -285,16 +283,13 @@ pcall(function()
 end)
 """
 
-# NUEVO: Función para dividir en exactamente N partes
 def split_string(s, num_parts=100):
     n = len(s)
     if n < num_parts:
         s = s + " " * (num_parts - n)
         n = len(s)
-    
     base_len = n // num_parts
     remainder = n % num_parts
-    
     parts = []
     start = 0
     for i in range(num_parts):
@@ -303,40 +298,76 @@ def split_string(s, num_parts=100):
         start += length
     return parts
 
+# NUEVA LÓGICA: Crea la sopa comprimida y mezclada
 def build_fragmented_payload(code_str, num_parts=100):
-    # 1. Fragmentar el código en 100 partes exactas
     parts = split_string(code_str, num_parts)
+    key = random.randint(1, 255)
+    order_key = random.randint(1, 255)
     
-    # 2. Generar las variables con cada fragmento (Fuera de la tabla de bytes gigante)
-    part_decls = ""
-    args = []
-    for i, p in enumerate(parts):
-        var_name = f"_{randomName()}"
-        # Escapar caracteres especiales para Lua
-        escaped_p = p.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r')
-        part_decls += f'local {var_name} = "{escaped_p}"\n'
-        args.append(var_name)
+    var_list = []
+    soup_decls = "local _soup = {}\n"
+    
+    # 1. Encriptar, comprimir y mezclar cada fragmento
+    for p in parts:
+        # Convertir a bytes encriptados (Comprimido y ofuscado)
+        enc_bytes = [ord(c) ^ ((key + j) & 0xFF) for j, c in enumerate(p)]
+        enc_str = ",".join(str(b) for b in enc_bytes)
         
-    # 3. Lógica que junta y ejecuta, esta será ofuscada por las 18 VMs
-    lua_logic = """
-    local function _join_and_run(...)
-        local args = {...}
-        local full_str = table.concat(args)
-        local loader = loadstring or load
-        if loader then
-            local ok, res = pcall(loader, full_str)
-            if ok and res then pcall(res) end
+        # Índice aleatorio para ocultar el orden
+        idx = random.randint(1000, 9999)
+        var_list.append(idx ^ order_key)
+        
+        decl = f"_soup[{idx}] = {{{enc_str}}}"
+        
+        # Mezclar (Sopa): Envolver en bucles, condicionales o funciones falsas
+        wrap = random.randint(1, 6)
+        junk1 = generate_soup_junk()
+        junk2 = generate_soup_junk()
+        
+        if wrap == 1:
+            soup_decls += f"do {junk1} {decl} {junk2} end\n"
+        elif wrap == 2:
+            soup_decls += f"if type(_soup) == 'table' then {junk1} {decl} {junk2} end\n"
+        elif wrap == 3:
+            fname = randomName()
+            soup_decls += f"local function {fname}() {junk1} {decl} {junk2} end {fname}()\n"
+        elif wrap == 4:
+            soup_decls += f"for i=1,1 do {junk1} {decl} {junk2} end\n"
+        elif wrap == 5:
+            soup_decls += f"pcall(function() {junk1} {decl} {junk2} end)\n"
+        else:
+            soup_decls += f"{junk1} {decl} {junk2}\n"
+            
+        soup_decls += generateSingleJunkLine() + "\n"
+
+    # 2. Lógica para juntar, desencriptar y ejecutar (Esta pasa por las 18 VMs)
+    lua_indices = ",".join(str(i) for i in var_list)
+    reassembly_lua = f"""
+    local _ord = {{{lua_indices}}}
+    local _ord_k = {order_key}
+    local _k = {key}
+    local _res = ""
+    for _, enc_idx in ipairs(_ord) do
+        local idx = bit32.bxor(enc_idx, _ord_k)
+        local part = _soup[idx]
+        if part then
+            for j, b in ipairs(part) do
+                _res = _res .. string.char(bit32.bxor(b, (_k + j - 1) % 256))
+            end
         end
     end
-    return _join_and_run
+    local _loader = loadstring or load
+    if _loader then
+        local ok, fn = pcall(_loader, _res)
+        if ok and fn then pcall(fn) end
+    end
     """
     
-    # Ofuscar la lógica de unión con las 18 capas de VM
-    obfuscated_logic = build18xVM(lua_logic)
+    # Pasar la lógica de reensamblaje por las 18 capas de VM
+    vm_reassembly = build18xVM(reassembly_lua)
     
-    # 4. Construir el ensamblaje final
-    caller = f"local _f = {obfuscated_logic}\n_f({', '.join(args)})\n"
-    return part_decls + "\n" + caller
+    # 3. Unir la sopa (declaraciones esparcidas) y la VM
+    return soup_decls + "\n" + vm_reassembly
 
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
@@ -346,20 +377,17 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections()
     
-    # Juntamos el Anti-Tamper y Anti-Env Logger
     protection_payload = antiDebug + "\n" + extraProts + "\n" + ANTI_TAMPER_CORE
     
-    # 1. Aplicar la fragmentación en 100 partes al Anti-Tamper
+    # 1. Aplicar la fragmentación en 100 partes exactas como "sopa"
     anti_tamper_final = build_fragmented_payload(protection_payload, 100)
     
-    # 2. Preparar el script del usuario
     isLoadstringRegex = re.compile(
         r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
         re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     payloadToProtect = match.group(1) if match else sourceCode
 
-    # El script del usuario también pasa por las 18 VMs para su protección
     final_user_script = build18xVM(payloadToProtect)
     final_user_script = buildStackObfuscation(final_user_script)
     
@@ -377,7 +405,6 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--min-size', type=int, default=23000)
     args = ap.parse_args()
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
