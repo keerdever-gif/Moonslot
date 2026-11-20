@@ -1,12 +1,7 @@
-#!/usr/bin/env python3
-# obfuscator.py — Luau VM obfuscator (100% Universal y a prueba de fallos)
 import re
 import random
 import argparse
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. WATERMARK Y ANTI-TAMPER (UNIVERSAL)
-# ═══════════════════════════════════════════════════════════════════════════
 HEADER = '''--[[
   Protected by Moonslot
   Unauthorized reproduction or distribution is prohibited.
@@ -18,8 +13,6 @@ local __R = {
     ["0x07"]="CRITICAL_FUNCTION_HOOKED_BOOT", ["0x09"]="CRITICAL_FUNCTION_HOOKED_RUNTIME",
     ["0x50"]="ENV_LOGGER_HOOK_DETECTED",
 }
-
--- DETECTOR UNIVERSAL DE EJECUTORES (Arceus, Delta, Fluxus, Synapse, etc.)
 local function __is_executor()
     local ok, exec = pcall(function() return identifyexecutor and identifyexecutor() end)
     if ok and exec and exec ~= "Unknown" then return true end
@@ -31,19 +24,15 @@ local function __is_executor()
     if type(syn) == "table" or type(fluxus) == "table" or type(secure_call) == "function" then return true end
     return false
 end
-
 local function __at_isHooked(fn)
     if type(fn) ~= "function" then return false end
     if type(isfunctionhooked) ~= "function" then return false end
     local ok, v = pcall(isfunctionhooked, fn)
     return ok and v == true
 end
-
 local function __at_checkCritical()
-    -- Si estamos en un ejecutor, ignoramos los hooks críticos.
     if __is_executor() then return nil end 
     if type(isfunctionhooked) ~= "function" then return nil end
-    
     local count = 0
     if __at_isHooked(pcall) then count = count + 1 end
     if __at_isHooked(rawget) then count = count + 1 end
@@ -52,14 +41,11 @@ local function __at_checkCritical()
     if count >= 2 then return "0x07" end
     return nil
 end
-
 local function __at_checkEnvLogger()
     local tampered = false
     pcall(function()
         local p = game and game.Players and game.Players.LocalPlayer
         if not p then return end
-        
-        -- Chequeo seguro que detecta loggers sin fallar en móviles
         if math.floor(1.5) ~= 1 or math.ceil(1.5) ~= 2 then tampered = true end
         if string.len("abc") ~= 3 then tampered = true end
         if type(tostring) ~= "function" then tampered = true end
@@ -67,7 +53,6 @@ local function __at_checkEnvLogger()
     if tampered then return "0x50" end
     return nil
 end
-
 local function __at_run()
     local ok, code = pcall(__at_checkCritical)
     if ok and code then return code, __R[code] or "TAMPER" end
@@ -76,7 +61,6 @@ local function __at_run()
     return nil, nil
 end
 __at_code, __at_text = __at_run()
-
 if __at_code then
     local msg = "detect body go away"
     pcall(function() if type(warn) == "function" then warn(msg) end end)
@@ -105,9 +89,6 @@ if __at_code then
 end
 '''
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. FORMAT LUA
-# ═══════════════════════════════════════════════════════════════════════════
 def format_lua_output(code, max_line=120):
     out, buf, i, n = [], [], 0, len(code)
     line_len = 0
@@ -174,9 +155,6 @@ def format_lua_output(code, max_line=120):
     flush()
     return '\n'.join(out)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. SEAK OBFUSCATOR CORE
-# ═══════════════════════════════════════════════════════════════════════════
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
@@ -236,15 +214,12 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
     vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-    
-    # 🔥 BLOQUE DE EJECUCIÓN SEGURO (A prueba de nil en cualquier ejecutor)
     vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
     vmCore += "local _ls = loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
     vmCore += "local _as = assert or _g.assert or (getfenv and getfenv().assert) "
     vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
     vmCore += "local _ok, _res = pcall(_as, _ls(_e, \"=\")) "
     vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
-    
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int) -> str:
@@ -282,9 +257,6 @@ pcall(function()
 end)
 """
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. ORQUESTADOR
-# ═══════════════════════════════════════════════════════════════════════════
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
@@ -313,9 +285,6 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     )
     return format_lua_output(final_code, max_line=120)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. CLI
-# ═══════════════════════════════════════════════════════════════════════════
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('input')
