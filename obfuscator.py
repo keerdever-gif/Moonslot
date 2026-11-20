@@ -118,7 +118,6 @@ def escape_lua_string(s: str) -> str:
 # --- TÉCNICAS DE OFUSCACIÓN ---
 
 def layer_math_obfuscation(code, percentage=0.15):
-    """Math Obfuscation dinámico: Reemplaza el % especificado de números"""
     strings = []
     def save_string(m):
         strings.append(m.group(0))
@@ -251,13 +250,12 @@ def layer_function_splitting_and_deadcode(code, iterations=1):
     return vm
 
 def apply_all_layers(payload_str, iterations=1, math_percent=0.15):
-    """Aplica las capas y permite controlar iteraciones y Math %"""
     payload = buildBytecodeEmulation(payload_str)
     
     for _ in range(iterations):
         payload = layer_string_fragmentation(payload)
         payload = layer_function_splitting_and_deadcode(payload, iterations=1)
-        payload = layer_math_obfuscation(payload, percentage=math_percent) # <-- Aquí se aplica el %
+        payload = layer_math_obfuscation(payload, percentage=math_percent)
         payload = layer_stack_obfuscation(payload)
         payload = layer_metamethod_hiding(payload)
         payload = layer_antidebugging(payload)
@@ -274,14 +272,12 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     random.seed(seed)
     
     protection_payload = "local __run=function() " + ANTI_TAMPER_CORE.strip() + " end pcall(__run) " + getExtraProtections()
-    # Anti-tamper: 2 iteraciones (Peso ~18 KB)
     final_protection = apply_all_layers(protection_payload, iterations=2, math_percent=0.10)
     
     isLoadstringRegex = re.compile(r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)', re.IGNORECASE)
     match = isLoadstringRegex.search(sourceCode)
     payloadToProtect = match.group(1) if match else sourceCode
     
-    # Script User: 1 iteración pero con 15% de math (Peso ~12 KB para un script de 1 KB)
     final_user_script = apply_all_layers(payloadToProtect, iterations=1, math_percent=0.15)
     
     final_code = f"{HEADER}\n{final_protection}\n{final_user_script}"
@@ -292,7 +288,10 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
+    # Agregamos de nuevo --min-size para que tu bot no de error
+    ap.add_argument('--min-size', type=int, default=23000) 
     args = ap.parse_args()
+    
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
     out = obfuscate(src, seed=args.seed)
