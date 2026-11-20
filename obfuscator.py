@@ -185,7 +185,6 @@ def generateSingleJunkLine() -> str:
     else: 
         return f'local {randomName()}={{}} for i=1,500 do {randomName()}[i]=string.rep("x",50) end {randomName()}=nil pcall(collectgarbage) '
 
-# NUEVO: Generador de basura para hacer la "sopa" de variables
 def generate_soup_junk() -> str:
     r = random.random()
     if r < 0.2: return "local _x = math.random(1,100) "
@@ -298,7 +297,6 @@ def split_string(s, num_parts=100):
         start += length
     return parts
 
-# NUEVA LÓGICA: Crea la sopa comprimida y mezclada
 def build_fragmented_payload(code_str, num_parts=100):
     parts = split_string(code_str, num_parts)
     key = random.randint(1, 255)
@@ -307,40 +305,27 @@ def build_fragmented_payload(code_str, num_parts=100):
     var_list = []
     soup_decls = "local _soup = {}\n"
     
-    # 1. Encriptar, comprimir y mezclar cada fragmento
     for p in parts:
-        # Convertir a bytes encriptados (Comprimido y ofuscado)
         enc_bytes = [ord(c) ^ ((key + j) & 0xFF) for j, c in enumerate(p)]
         enc_str = ",".join(str(b) for b in enc_bytes)
-        
-        # Índice aleatorio para ocultar el orden
         idx = random.randint(1000, 9999)
         var_list.append(idx ^ order_key)
-        
         decl = f"_soup[{idx}] = {{{enc_str}}}"
         
-        # Mezclar (Sopa): Envolver en bucles, condicionales o funciones falsas
         wrap = random.randint(1, 6)
         junk1 = generate_soup_junk()
         junk2 = generate_soup_junk()
         
-        if wrap == 1:
-            soup_decls += f"do {junk1} {decl} {junk2} end\n"
-        elif wrap == 2:
-            soup_decls += f"if type(_soup) == 'table' then {junk1} {decl} {junk2} end\n"
+        if wrap == 1: soup_decls += f"do {junk1} {decl} {junk2} end\n"
+        elif wrap == 2: soup_decls += f"if type(_soup) == 'table' then {junk1} {decl} {junk2} end\n"
         elif wrap == 3:
             fname = randomName()
             soup_decls += f"local function {fname}() {junk1} {decl} {junk2} end {fname}()\n"
-        elif wrap == 4:
-            soup_decls += f"for i=1,1 do {junk1} {decl} {junk2} end\n"
-        elif wrap == 5:
-            soup_decls += f"pcall(function() {junk1} {decl} {junk2} end)\n"
-        else:
-            soup_decls += f"{junk1} {decl} {junk2}\n"
-            
+        elif wrap == 4: soup_decls += f"for i=1,1 do {junk1} {decl} {junk2} end\n"
+        elif wrap == 5: soup_decls += f"pcall(function() {junk1} {decl} {junk2} end)\n"
+        else: soup_decls += f"{junk1} {decl} {junk2}\n"
         soup_decls += generateSingleJunkLine() + "\n"
 
-    # 2. Lógica para juntar, desencriptar y ejecutar (Esta pasa por las 18 VMs)
     lua_indices = ",".join(str(i) for i in var_list)
     reassembly_lua = f"""
     local _ord = {{{lua_indices}}}
@@ -362,11 +347,7 @@ def build_fragmented_payload(code_str, num_parts=100):
         if ok and fn then pcall(fn) end
     end
     """
-    
-    # Pasar la lógica de reensamblaje por las 18 capas de VM
     vm_reassembly = build18xVM(reassembly_lua)
-    
-    # 3. Unir la sopa (declaraciones esparcidas) y la VM
     return soup_decls + "\n" + vm_reassembly
 
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
@@ -376,10 +357,8 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections()
-    
     protection_payload = antiDebug + "\n" + extraProts + "\n" + ANTI_TAMPER_CORE
     
-    # 1. Aplicar la fragmentación en 100 partes exactas como "sopa"
     anti_tamper_final = build_fragmented_payload(protection_payload, 100)
     
     isLoadstringRegex = re.compile(
@@ -405,12 +384,20 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    args = ap.parse_args()
-    with open(args.input, encoding='utf-8') as f:
-        src = f.read()
-    out = obfuscate(src, seed=args.seed)
-    with open(args.output, 'w', encoding='utf-8') as f:
-        f.write(out)
+    ap.add_argument('--min-size', type=int, default=23000) # Mantenemos por compatibilidad
+    
+    # CAMBIO CLAVE: Usar parse_known_args para ignorar argumentos desconocidos del bot
+    args, unknown = ap.parse_known_args()
+    
+    try:
+        with open(args.input, encoding='utf-8') as f:
+            src = f.read()
+        out = obfuscate(src, seed=args.seed)
+        with open(args.output, 'w', encoding='utf-8') as f:
+            f.write(out)
+    except Exception as e:
+        print(f"Error interno: {e}")
+        exit(1)
 
 if __name__ == '__main__':
     main()
