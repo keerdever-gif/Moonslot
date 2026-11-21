@@ -1,4 +1,3 @@
-# bot.py
 import os
 import io
 import sys
@@ -47,9 +46,7 @@ async def get_source(interaction, code, attachment):
     return None
 
 async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> str:
-    """
-    Calls obfuscator.py as a subprocess using its CLI.
-    """
+    """Llama a obfuscator.py por CLI."""
     with tempfile.TemporaryDirectory(prefix="obf_") as tmp:
         tmp_path = Path(tmp)
         in_file  = tmp_path / "input.lua"
@@ -83,6 +80,31 @@ async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> s
 
         return out_file.read_text(encoding="utf-8")
 
+# Nueva función interna para subir a Pastefy
+async def upload_to_pastefy(source: str, username: str) -> str:
+    """Sube el código ofuscado a Pastefy de forma invisible y devuelve la URL raw."""
+    payload = {
+        "title": f"Protected Script by {username}",
+        "content": source,
+        "visibility": "UNLISTED"
+    }
+    headers = {"Content-Type": "application/json"}
+    if PASTEFY_API_KEY:
+        headers["Authorization"] = f"Bearer {PASTEFY_API_KEY}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(PASTEFY_URL, json=payload, headers=headers) as resp:
+                if resp.status not in (200, 201):
+                    return None
+                data = await resp.json()
+                paste_id = data.get("id")
+                if paste_id:
+                    return f"https://pastefy.app/{paste_id}/raw"
+    except Exception:
+        pass
+    return None
+
 # ── /obf and /obfuscate ────────────────────────────────────────────────────
 @tree.command(name="obf", description="Obfuscate a Lua script and receive it via DM (Delta-ready).")
 @app_commands.describe(
@@ -109,21 +131,34 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         )
         return
 
-    await interaction.followup.send(
-        embed=purple_embed("🔒 Script obfuscated", "Your script is obfuscated. Check your DMs."),
-        ephemeral=True
-    )
+    # Subimos el código ofuscado a Pastefy en secreto para generar el link raw
+    raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
+
+    # Preparamos el mensaje del MD
+    dm_description = "This is your protected code.\n\n"
+    if raw_url:
+        loadstring_cmd = f'loadstring(game:HttpGet("{raw_url}"))()'
+        dm_description += f"**Loadstring:**\n```lua\n{loadstring_cmd}\n```"
+    else:
+        dm_description += "⚠️ *Could not generate Pastefy URL, but here is your file.*"
 
     try:
         dm_embed = purple_embed(
             f"👋 Hello {interaction.user.display_name}",
-            "This is your protected code."
+            dm_description
         )
         file_obj = discord.File(
             io.BytesIO(obfuscated.encode("utf-8")),
             filename="obfuscated.txt"
         )
+        
+        # Enviamos el MD (Embed con el loadstring + archivo adjunto)
         await interaction.user.send(embed=dm_embed, file=file_obj)
+        
+        await interaction.followup.send(
+            embed=purple_embed("🔒 Script obfuscated", "Your script is obfuscated. Check your DMs."),
+            ephemeral=True
+        )
     except discord.Forbidden:
         await interaction.followup.send(
             embed=purple_embed(
@@ -141,65 +176,6 @@ tree.add_command(
         callback=obf.callback
     )
 )
-
-# ── /pastefy ───────────────────────────────────────────────────────────────
-@tree.command(name="pastefy", description="Upload your Lua code to Pastefy and get a URL.")
-@app_commands.describe(
-    code="Paste your Lua code here (optional if you upload a file).",
-    file="Upload a .lua or .txt file with your code (optional)."
-)
-async def pastefy(interaction: discord.Interaction, code: str = None, file: discord.Attachment = None):
-    await interaction.response.defer(ephemeral=True)
-
-    source = await get_source(interaction, code, file)
-    if not source:
-        await interaction.followup.send(
-            embed=purple_embed("❌ Missing input", "You must provide `code` or upload a `file`."),
-            ephemeral=True
-        )
-        return
-
-    payload = {
-        "title": f"Script by {interaction.user.name}",
-        "content": source,
-        "visibility": "UNLISTED"
-    }
-    headers = {"Content-Type": "application/json"}
-    if PASTEFY_API_KEY:
-        headers["Authorization"] = f"Bearer {PASTEFY_API_KEY}"
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(PASTEFY_URL, json=payload, headers=headers) as resp:
-            if resp.status not in (200, 201):
-                text = await resp.text()
-                await interaction.followup.send(
-                    embed=purple_embed(
-                        "❌ Pastefy error",
-                        f"Status: `{resp.status}`\n```{text[:1000]}```"
-                    ),
-                    ephemeral=True
-                )
-                return
-            data = await resp.json()
-
-    paste_id = data.get("id")
-    if not paste_id:
-        await interaction.followup.send(
-            embed=purple_embed("❌ Pastefy error", "The response did not contain a paste `id`."),
-            ephemeral=True
-        )
-        return
-
-    paste_url = f"https://pastefy.app/{paste_id}"
-
-    embed = purple_embed("🔗 Pastefy link", f"Your code is available on Pastefy:\n{paste_url}")
-    view = discord.ui.View()
-    view.add_item(discord.ui.Button(
-        style=discord.ButtonStyle.link,
-        label="Open on Pastefy",
-        url=paste_url
-    ))
-    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 # ── Startup ────────────────────────────────────────────────────────────────
 @bot.event
