@@ -1,6 +1,7 @@
 import re
 import random
 import argparse
+import base64
 
 HEADER = '''--[[
   Protected by Moonslot - Extreme Obfuscation
@@ -186,16 +187,13 @@ def generateSingleJunkLine() -> str:
         return f'local {randomName()}={{}} for i=1,500 do {randomName()}[i]=string.rep("x",50) end {randomName()}=nil pcall(collectgarbage) '
 
 # ============================================================
-# NUEVO: OFUSCACIÓN LÉXICA Y TABLAS ENCRIPTADAS
+# OFUSCACIÓN LÉXICA
 # ============================================================
 
 def obfuscate_identifiers(code: str) -> str:
-    """Renombra variables locales y parámetros para ocultar '_index', 'lM', 't', 'k', etc."""
-    # Renombrado de parámetros comunes en setmetatable y funciones
     code = re.sub(r'\bt\(k\)', f'{randomName()}({randomName()})', code)
     code = re.sub(r'\b(lM|t|k)\b', lambda m: randomName() if m.group(0) in ('lM', 't', 'k') else m.group(0), code)
     
-    # Renombrado de variables locales declaradas
     local_vars = re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code)
     for var in set(local_vars):
         if var not in ['function', 'pcall', 'type', 'math', 'string', 'table', 'bit32', 'game', 'task']:
@@ -261,11 +259,8 @@ def minify_payload(code: str) -> str:
     return ' '.join(out)
 
 def build_vm_packed_payload(code_str: str) -> str:
-    # Minificar
     mini = minify_payload(code_str)
-    # Aplicar ofuscación léxica antes de empaquetar
     mini = obfuscate_identifiers(mini)
-    # Empaquetar en 18 capas de VM
     packed = build18xVM(mini)              
     packed = buildStackObfuscation(packed) 
     return packed
@@ -283,39 +278,65 @@ def applyCFF(blocks) -> str:
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
+# ============================================================
+# NUEVA VM REAL CON BASE64 (SIN TABLA DE BYTES GIGANTE)
+# ============================================================
+
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
     seed = random.randint(50, 249)
+    
+    B64_TABLE = randomName()
+    DECODE_FUNC = randomName()
+    
     vmCore = f"local _opcodes={{'ADD','SUB','MOV','JMP','CALL'}} local _ = _opcodes[math.random(1,5)] "
     vmCore += f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
-    vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
+    vmCore += f"local {STACK}={{}} local {KEY}={seed} "
     
-    # Encriptación XOR de bytes en la tabla
-    chunkSize = 30
+    vmCore += f"local {B64_TABLE} = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
+    vmCore += f"local function {DECODE_FUNC}(data) local res = {{}} local i = 1 while i <= #data do "
+    vmCore += f"local b1, b2, b3, b4 = data:byte(i, i+3) "
+    vmCore += f"local c1, c2, c3, c4 = {B64_TABLE}:find(string.char(b1), 1, true), {B64_TABLE}:find(string.char(b2), 1, true), {B64_TABLE}:find(string.char(b3), 1, true), {B64_TABLE}:find(string.char(b4), 1, true) "
+    vmCore += f"c1, c2, c3, c4 = c1 - 1, c2 and c2 - 1, c3 and c3 - 1, c4 and c4 - 1 "
+    vmCore += f"local byte1 = math.floor(c1 * 4 + (c2 or 0) / 16) "
+    vmCore += f"local byte2 = math.floor(((c2 or 0) % 16) * 16 + (c3 or 0) / 4) "
+    vmCore += f"local byte3 = math.floor(((c3 or 0) % 4) * 64 + (c4 or 0)) "
+    vmCore += f"table.insert(res, string.char(byte1)) "
+    vmCore += f"if c3 then table.insert(res, string.char(byte2)) end "
+    vmCore += f"if c4 then table.insert(res, string.char(byte3)) end "
+    vmCore += f"i = i + 4 end return table.concat(res) end "
+    
+    # Encriptación y codificación Base64
+    chunkSize = 50
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
     totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks): totalChunks = len(realChunks)
     currentReal, globalIndex = 0, 0
+    
     for i in range(1, totalChunks + 1):
         if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
             realOrder.append(i)
             chunk = realChunks[currentReal]
-            encryptedBytes = []
+            encryptedBytes = bytearray()
             for j in range(len(chunk)):
-                enc = ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF)
-                encryptedBytes.append(str(enc))
+                encryptedBytes.append(ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF))
                 globalIndex += 1
-            vmCore += f"{POOL}[{i}]={{{','.join(encryptedBytes)}}} "
+            b64_str = base64.b64encode(encryptedBytes).decode('ascii')
+            vmCore += f"{POOL}[{i}] = \"{b64_str}\" "
             currentReal += 1
         else:
-            fakeBytes = [str(random.randint(0, 254)) for _ in range(random.randint(5, 15))]
-            vmCore += f"{POOL}[{i}]={{{','.join(fakeBytes)}}} "
+            fake_bytes = bytes([random.randint(0, 255) for _ in range(random.randint(5, 20))])
+            b64_fake = base64.b64encode(fake_bytes).decode('ascii')
+            vmCore += f"{POOL}[{i}] = \"{b64_fake}\" "
+            
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
-    idxVar, byteVar = randomName(), randomName()
-    vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do for _, {byteVar} in ipairs({POOL}[{idxVar}]) do "
-    vmCore += f"local b = math.floor(bit32.bxor({byteVar}, ({KEY} + _gIdx) % 256)) % 256 "
-    vmCore += f"table.insert({STACK}, {B_TABLE}[b]) _gIdx=_gIdx+1 end end "
+    idxVar = randomName()
+    vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do "
+    vmCore += f"local dec_chunk = {DECODE_FUNC}({POOL}[{idxVar}]) "
+    vmCore += f"for j=1, #dec_chunk do local b = dec_chunk:byte(j) "
+    vmCore += f"local real_b = math.floor(bit32.bxor(b, ({KEY} + _gIdx) % 256)) % 256 "
+    vmCore += f"table.insert({STACK}, {B_TABLE}[real_b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
     vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
     vmCore += "local _loaders = {loadstring, load, _g.loadstring, (getfenv and getfenv().loadstring)} "
