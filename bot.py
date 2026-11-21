@@ -18,7 +18,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     sys.exit("ERROR: DISCORD_TOKEN not set. Create a .env file with DISCORD_TOKEN=your_token")
 
-PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY")
+PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY") # Asegúrate de que no tenga espacios
 PASTEFY_URL = "https://pastefy.app/api/v2/paste"
 
 BASE_DIR      = Path(__file__).resolve().parent
@@ -80,37 +80,35 @@ async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> s
         return out_file.read_text(encoding="utf-8")
 
 async def upload_to_pastefy(source: str, username: str) -> str:
-    payload = {
-        "title": f"Protected Script by {username}",
-        "content": source,
-        "visibility": "UNLISTED"
-    }
-    headers = {"Content-Type": "application/json"}
+    # Usar multipart/form-data en lugar de JSON (más compatible con Pastefy)
+    form = aiohttp.FormData()
+    form.add_field('title', f"Protected Script by {username}")
+    form.add_field('content', source)
+    form.add_field('visibility', 'UNLISTED')
+
+    headers = {}
     if PASTEFY_API_KEY:
-        headers["Authorization"] = f"Bearer {PASTEFY_API_KEY}"
+        # El .strip() elimina cualquier espacio o salto de línea invisible
+        headers["Authorization"] = f"Bearer {PASTEFY_API_KEY.strip()}"
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(PASTEFY_URL, json=payload, headers=headers) as resp:
+            async with session.post(PASTEFY_URL, data=form, headers=headers) as resp:
                 text = await resp.text()
                 
-                # Si falla, imprimimos el error en los logs de Railway para saber por qué
                 if resp.status not in (200, 201):
-                    print(f"[PASTEFY ERROR] Status {resp.status}: {text}")
+                    print(f"[PASTEFY ERROR] Status: {resp.status}")
+                    print(f"[PASTEFY ERROR] Response: {text}")
                     return None
                 
-                try:
-                    data = await resp.json()
-                except Exception as json_err:
-                    print(f"[PASTEFY JSON ERROR] {json_err} - Raw: {text}")
-                    return None
-                    
+                data = await resp.json()
                 paste_id = data.get("id")
-                if paste_id:
-                    return f"https://pastefy.app/{paste_id}/raw"
-                else:
-                    print(f"[PASTEFY ERROR] No ID found in response: {data}")
+                if not paste_id:
+                    print(f"[PASTEFY ERROR] No 'id' in response: {data}")
                     return None
+                
+                return f"https://pastefy.app/{paste_id}/raw"
+
     except Exception as e:
         print(f"[PASTEFY EXCEPTION] {e}")
         return None
@@ -141,14 +139,16 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         )
         return
 
+    # Subir a Pastefy en secreto
     raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
 
+    # Preparar el Embed
     dm_description = "This is your protected code.\n\n"
     if raw_url:
         loadstring_cmd = f'loadstring(game:HttpGet("{raw_url}"))()'
         dm_description += f"**Loadstring:**\n```lua\n{loadstring_cmd}\n```"
     else:
-        dm_description += "⚠️ *Could not generate Pastefy URL. Check bot logs on Railway for details.*"
+        dm_description += "⚠️ *Could not generate Pastefy URL. Check bot logs.*"
 
     dm_embed = purple_embed(
         f"👋 Hello {interaction.user.display_name}",
@@ -159,7 +159,9 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         filename="obfuscated.txt"
     )
 
+    # Lógica de Servidor vs DM
     if interaction.guild is not None:
+        # Es un servidor
         try:
             await interaction.user.send(embed=dm_embed, file=file_obj)
             await interaction.followup.send(
@@ -175,6 +177,7 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
                 ephemeral=True
             )
     else:
+        # Ya estamos en un DM (sin mensaje de "Check your DMs")
         await interaction.followup.send(embed=dm_embed, file=file_obj, ephemeral=False)
 
 # Alias /obfuscate
