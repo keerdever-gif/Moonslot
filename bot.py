@@ -38,7 +38,6 @@ intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True 
 
-# FIX AQUÍ: help_command=None desactiva el comando help por defecto de discord.py
 bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 tree = bot.tree
 
@@ -264,11 +263,15 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         obfuscated = await run_obfuscator(source)
         raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
 
-        dm_description = "This is your protected code.\n\n"
         if raw_url:
-            dm_description += f"**Loadstring:**\n```lua\nlocal s = game:HttpGet(\"{raw_url}\")\nlocal f, e = loadstring(s)\nif f then f() else warn(\"Error: \" .. tostring(e)) end\n```"
+            # EXACTAMENTE COMO EN TU IMAGEN
+            dm_description = (
+                "This is your protected code.\n\n"
+                "**Loadstring:**\n"
+                f"```lua\nloadstring(game:HttpGet(\"{raw_url}\"))()\n```"
+            )
         else:
-            dm_description += "⚠️ *Could not generate Pastefy URL.*"
+            dm_description = "⚠️ *Could not generate Pastefy URL.*"
 
         dm_embed = purple_embed(f"👋 Hello {interaction.user.display_name}", dm_description)
         file_obj = discord.File(io.BytesIO(obfuscated.encode("utf-8")), filename="obfuscated.txt")
