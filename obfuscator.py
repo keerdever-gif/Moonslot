@@ -101,72 +101,6 @@ if __at_code then
 end
 '''
 
-def format_lua_output(code, max_line=120):
-    out, buf, i, n = [], [], 0, len(code)
-    line_len = 0
-    st = 'normal'; lstr_close = None; lcom_close = None
-    def flush():
-        nonlocal buf, line_len
-        if buf:
-            line = ''.join(buf).rstrip()
-            if line: out.append(line)
-            buf = []; line_len = 0
-    while i < n:
-        c = code[i]
-        if st == 'dq':
-            buf.append(c); line_len += 1
-            if c == '\\' and i + 1 < n: buf.append(code[i+1]); line_len += 1; i += 2; continue
-            if c == '"': st = 'normal'
-            i += 1; continue
-        if st == 'sq':
-            buf.append(c); line_len += 1
-            if c == '\\' and i + 1 < n: buf.append(code[i+1]); line_len += 1; i += 2; continue
-            if c == "'": st = 'normal'
-            i += 1; continue
-        if st == 'lstr':
-            if code.startswith(lstr_close, i):
-                buf.append(lstr_close); line_len += len(lstr_close); i += len(lstr_close); st = 'normal'; continue
-            buf.append(c); line_len += 1
-            if c == '\n': flush()
-            i += 1; continue
-        if st == 'lcom':
-            if code.startswith(lcom_close, i):
-                buf.append(lcom_close); line_len += len(lcom_close); i += len(lcom_close); st = 'normal'; continue
-            buf.append(c); line_len += 1
-            if c == '\n': flush()
-            i += 1; continue
-        if st == 'com':
-            buf.append(c); line_len += 1
-            if c == '\n': flush(); st = 'normal'
-            i += 1; continue
-        if code.startswith('--', i):
-            m = re.match(r'--\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); lcom_close = ']' + eq + ']'
-                tok = code[i:i+3+len(eq)]; buf.append(tok); line_len += len(tok); i += len(tok); st = 'lcom'; continue
-            buf.append('--'); line_len += 2; i += 2; st = 'com'; continue
-        if c == '[':
-            m = re.match(r'\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); lstr_close = ']' + eq + ']'
-                tok = code[i:i+2+len(eq)]; buf.append(tok); line_len += len(tok); i += len(tok); st = 'lstr'; continue
-        if c == '"': st = 'dq'; buf.append(c); line_len += 1; i += 1; continue
-        if c == "'": st = 'sq'; buf.append(c); line_len += 1; i += 1; continue
-        buf.append(c); line_len += 1
-        if c == '\n': flush(); i += 1; continue
-        if line_len >= max_line:
-            if c in ';,}': flush(); i += 1; continue
-            if c == ' ': flush(); i += 1; continue
-            s = ''.join(buf)
-            idx = -1
-            for k in range(len(s)-1, -1, -1):
-                if s[k] in ' ,;': idx = k; break
-            if idx > 0 and idx > len(s) * 0.5:
-                out.append(s[:idx].rstrip()); buf = [s[idx:].lstrip()]; line_len = len(buf[0]); i += 1; continue
-        i += 1
-    flush()
-    return '\n'.join(out)
-
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
@@ -197,7 +131,6 @@ def generate_soup_junk() -> str:
 def obfuscate_identifiers(code: str) -> str:
     code = re.sub(r'\bt\(k\)', f'{randomName()}({randomName()})', code)
     code = re.sub(r'\b(lM|t|k)\b', lambda m: randomName() if m.group(0) in ('lM', 't', 'k') else m.group(0), code)
-    
     local_vars = re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code)
     for var in set(local_vars):
         if var not in ['function', 'pcall', 'type', 'math', 'string', 'table', 'bit32', 'game', 'task']:
@@ -281,23 +214,34 @@ def applyCFF(blocks) -> str:
     return lua
 
 # ============================================================
-# NUEVA VM REAL CON BASE64 (EN FORMATO SOPA)
+# SOPA REAL: Fragmentación de Base64
 # ============================================================
 
-def wrap_b64_assignment(pool, idx, b64):
+def generate_b64_soup(pool, idx, b64):
+    # Partimos el Base64 en trozos de 10 caracteres
+    pieces = [b64[i:i+10] for i in range(0, len(b64), 10)]
+    # Creamos una concatenación con ".."
+    concat_expr = " .. ".join(f"'{p}'" for p in pieces)
+    
     r = random.random()
-    if r < 0.2:
-        return f"{pool}[{idx}] = '{b64}' "
-    elif r < 0.4:
-        mid = max(1, len(b64) // 2)
-        return f"{pool}[{idx}] = '{b64[:mid]}' .. '{b64[mid:]}' "
-    elif r < 0.6:
+    if r < 0.15:
+        return f"{pool}[{idx}] = {concat_expr} "
+    elif r < 0.30:
         v = randomName()
-        return f"do local {v} = '{b64}' {pool}[{idx}] = {v} end "
-    elif r < 0.8:
-        return f"if type(tostring) == 'function' then {pool}[{idx}] = '{b64}' end "
+        return f"do local {v} = {concat_expr} {pool}[{idx}] = {v} end "
+    elif r < 0.45:
+        v1, v2 = randomName(), randomName()
+        return f"if type(tostring) == 'function' then local {v1} = {concat_expr} {pool}[{idx}] = {v1} end "
+    elif r < 0.60:
+        # Usar table.concat
+        pieces_table = ", ".join(f"'{p}'" for p in pieces)
+        return f"{generate_soup_junk()} {pool}[{idx}] = table.concat({{{pieces_table}}}) "
+    elif r < 0.75:
+        return f"{pool}[{idx}] = (function() return {concat_expr} end)() "
+    elif r < 0.85:
+        return f"for i=1,1 do local _x = {concat_expr} {pool}[{idx}] = _x end "
     else:
-        return f"{generate_soup_junk()} {pool}[{idx}] = '{b64}' {generateSingleJunkLine()} "
+        return f"pcall(function() {pool}[{idx}] = {concat_expr} end) "
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
@@ -339,16 +283,14 @@ def buildTrueVM(payloadStr: str) -> str:
                 encryptedBytes.append(ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF))
                 globalIndex += 1
             b64_str = base64.b64encode(encryptedBytes).decode('ascii')
-            # Usamos la función envoltorio (sopa)
-            vmCore += wrap_b64_assignment(POOL, i, b64_str) + "\n"
+            vmCore += generate_b64_soup(POOL, i, b64_str)
             currentReal += 1
         else:
             fake_bytes = bytes([random.randint(0, 255) for _ in range(random.randint(5, 20))])
             b64_fake = base64.b64encode(fake_bytes).decode('ascii')
-            # También usamos el envoltorio para la basura
-            vmCore += wrap_b64_assignment(POOL, i, b64_fake) + "\n"
+            vmCore += generate_b64_soup(POOL, i, b64_fake)
             
-    vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
+    vmCore += f" local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar = randomName()
     vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do "
     vmCore += f"local dec_chunk = {DECODE_FUNC}({POOL}[{idxVar}]) "
@@ -402,6 +344,56 @@ pcall(function()
 end)
 """
 
+# ============================================================
+# MINIFICADOR AGRESIVO (ELIMINA ESPACIOS GIGANTES)
+# ============================================================
+
+def true_minify(code):
+    tokens = []
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in '"\'':
+            quote = c
+            j = i + 1
+            while j < n and code[j] != quote:
+                if code[j] == '\\': j += 1
+                j += 1
+            tokens.append(code[i:j+1])
+            i = j + 1
+        elif c == '[':
+            m = re.match(r'\[(=*)\[', code[i:])
+            if m:
+                eq = m.group(1)
+                close = ']' + eq + ']'
+                j = code.find(close, i)
+                if j != -1:
+                    tokens.append(code[i:j+len(close)])
+                    i = j + len(close)
+                    continue
+            tokens.append(c)
+            i += 1
+        elif c.isspace():
+            i += 1
+        elif c.isalnum() or c == '_':
+            j = i
+            while j < n and (code[j].isalnum() or code[j] == '_'):
+                j += 1
+            tokens.append(code[i:j])
+            i = j
+        else:
+            tokens.append(c)
+            i += 1
+            
+    out = []
+    for idx, tok in enumerate(tokens):
+        out.append(tok)
+        if idx < len(tokens) - 1:
+            nxt = tokens[idx+1]
+            if (tok[-1].isalnum() or tok[-1] == '_') and (nxt[0].isalnum() or nxt[0] == '_'):
+                out.append(' ')
+    return ''.join(out)
+
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
@@ -429,7 +421,9 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
         f"{anti_tamper_final}\n"
         f"{final_user_script}"
     )
-    return format_lua_output(final_code, max_line=120)
+    
+    # AHORA APLICAMOS LA MINIFICACIÓN AGRESIVA
+    return true_minify(final_code)
 
 def main():
     ap = argparse.ArgumentParser()
