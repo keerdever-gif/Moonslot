@@ -18,7 +18,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 if not DISCORD_TOKEN:
     sys.exit("ERROR: DISCORD_TOKEN not set. Create a .env file with DISCORD_TOKEN=your_token")
 
-PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY")  # opcional si solo creas pastes anónimos
+PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY")
 PASTEFY_URL = "https://pastefy.app/api/v2/paste"
 
 BASE_DIR      = Path(__file__).resolve().parent
@@ -46,7 +46,6 @@ async def get_source(interaction, code, attachment):
     return None
 
 async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> str:
-    """Llama a obfuscator.py por CLI."""
     with tempfile.TemporaryDirectory(prefix="obf_") as tmp:
         tmp_path = Path(tmp)
         in_file  = tmp_path / "input.lua"
@@ -80,9 +79,7 @@ async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> s
 
         return out_file.read_text(encoding="utf-8")
 
-# Nueva función interna para subir a Pastefy
 async def upload_to_pastefy(source: str, username: str) -> str:
-    """Sube el código ofuscado a Pastefy de forma invisible y devuelve la URL raw."""
     payload = {
         "title": f"Protected Script by {username}",
         "content": source,
@@ -131,10 +128,10 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         )
         return
 
-    # Subimos el código ofuscado a Pastefy en secreto para generar el link raw
+    # Subimos el código ofuscado a Pastefy en secreto
     raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
 
-    # Preparamos el mensaje del MD
+    # Preparamos el embed que contiene el loadstring
     dm_description = "This is your protected code.\n\n"
     if raw_url:
         loadstring_cmd = f'loadstring(game:HttpGet("{raw_url}"))()'
@@ -142,31 +139,38 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
     else:
         dm_description += "⚠️ *Could not generate Pastefy URL, but here is your file.*"
 
-    try:
-        dm_embed = purple_embed(
-            f"👋 Hello {interaction.user.display_name}",
-            dm_description
-        )
-        file_obj = discord.File(
-            io.BytesIO(obfuscated.encode("utf-8")),
-            filename="obfuscated.txt"
-        )
-        
-        # Enviamos el MD (Embed con el loadstring + archivo adjunto)
-        await interaction.user.send(embed=dm_embed, file=file_obj)
-        
-        await interaction.followup.send(
-            embed=purple_embed("🔒 Script obfuscated", "Your script is obfuscated. Check your DMs."),
-            ephemeral=True
-        )
-    except discord.Forbidden:
-        await interaction.followup.send(
-            embed=purple_embed(
-                "⚠️ DM failed",
-                "I couldn't send you a DM. Please enable direct messages from server members and try again."
-            ),
-            ephemeral=True
-        )
+    dm_embed = purple_embed(
+        f"👋 Hello {interaction.user.display_name}",
+        dm_description
+    )
+    file_obj = discord.File(
+        io.BytesIO(obfuscated.encode("utf-8")),
+        filename="obfuscated.txt"
+    )
+
+    # Lógica: Verificar si es un servidor o un DM
+    if interaction.guild is not None:
+        # ── ES UN SERVIDOR ──
+        try:
+            # Envía el MD
+            await interaction.user.send(embed=dm_embed, file=file_obj)
+            # Avisa en el canal que revise sus DMs
+            await interaction.followup.send(
+                embed=purple_embed("🔒 Script obfuscated", "Your script is obfuscated. Check your DMs."),
+                ephemeral=True
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                embed=purple_embed(
+                    "⚠️ DM failed",
+                    "I couldn't send you a DM. Please enable direct messages from server members and try again."
+                ),
+                ephemeral=True
+            )
+    else:
+        # ── ES UN MENSAJE DIRECTO (DM) ──
+        # Enviamos directamente la respuesta aquí sin decir "Check your DMs"
+        await interaction.followup.send(embed=dm_embed, file=file_obj, ephemeral=False)
 
 # Alias /obfuscate
 tree.add_command(
