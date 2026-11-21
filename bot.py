@@ -1,6 +1,7 @@
 import os
 import io
 import sys
+import re
 import asyncio
 import tempfile
 from pathlib import Path
@@ -20,6 +21,12 @@ if not DISCORD_TOKEN:
 
 PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY") 
 PASTEFY_URL = "https://pastefy.app/api/v2/paste"
+WELCOME_CHANNEL_ID = os.getenv("WELCOME_CHANNEL_ID")
+
+# Enlace de invitación actualizado
+INVITE_URL = os.getenv("INVITE_URL", "https://discord.gg/M5AfTVDxM")
+
+ALLOWED_GUILD_ID = 1572697383693713539
 
 BASE_DIR      = Path(__file__).resolve().parent
 OBFUSCATOR_PY = BASE_DIR / "obfuscator.py"
@@ -30,7 +37,9 @@ if not OBFUSCATOR_PY.is_file():
 
 # ── Bot setup ──────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
+intents.members = True
+intents.message_content = True # Necesario para .help
+bot = commands.Bot(command_prefix=".", intents=intents)
 tree = bot.tree
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -45,6 +54,90 @@ async def get_source(interaction, code, attachment):
         return code
     return None
 
+async def check_dm_restriction(interaction: discord.Interaction) -> bool:
+    """Verifica si el usuario está en un DM y si pertenece al servidor requerido."""
+    if interaction.guild is not None:
+        return True # Está en un servidor, no hay restricción
+
+    # Está en un DM, verificar servidor
+    guild = bot.get_guild(ALLOWED_GUILD_ID)
+    if not guild:
+        try:
+            guild = await bot.fetch_guild(ALLOWED_GUILD_ID)
+        except Exception:
+            pass
+
+    is_member = False
+    if guild:
+        member = guild.get_member(interaction.user.id)
+        if not member:
+            try:
+                member = await guild.fetch_member(interaction.user.id)
+            except Exception:
+                pass
+        is_member = member is not None
+
+    if not is_member:
+        await interaction.followup.send(
+            embed=purple_embed(
+                "Access Denied", 
+                f"Para usar este bot en Mensajes Directos, debes estar en nuestro servidor oficial.\n\n**Únete aquí:** {INVITE_URL}"
+            ),
+            ephemeral=True
+        )
+        return False
+    return True
+
+def minify_code(code_str):
+    # Eliminar comentarios
+    code_str = re.sub(r'--\[\[.*?\]\]', '', code_str, flags=re.DOTALL)
+    code_str = re.sub(r'--[^\n]*', '', code_str)
+
+    tokens = []
+    i, n = 0, len(code_str)
+    while i < n:
+        c = code_str[i]
+        if c in '"\'':
+            quote = c
+            j = i + 1
+            while j < n and code_str[j] != quote:
+                if code_str[j] == '\\': j += 1
+                j += 1
+            tokens.append(code_str[i:j+1])
+            i = j + 1
+        elif c == '[':
+            m = re.match(r'\[(=*)\[', code_str[i:])
+            if m:
+                eq = m.group(1)
+                close = ']' + eq + ']'
+                j = code_str.find(close, i)
+                if j != -1:
+                    tokens.append(code_str[i:j+len(close)])
+                    i = j + len(close)
+                    continue
+            tokens.append(c)
+            i += 1
+        elif c.isspace():
+            i += 1
+        elif c.isalnum() or c == '_':
+            j = i
+            while j < n and (code_str[j].isalnum() or code_str[j] == '_'):
+                j += 1
+            tokens.append(code_str[i:j])
+            i = j
+        else:
+            tokens.append(c)
+            i += 1
+            
+    out = []
+    for idx, tok in enumerate(tokens):
+        out.append(tok)
+        if idx < len(tokens) - 1:
+            nxt = tokens[idx+1]
+            if (tok[-1].isalnum() or tok[-1] == '_') and (nxt[0].isalnum() or nxt[0] == '_'):
+                out.append(' ')
+    return ''.join(out)
+
 async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> str:
     with tempfile.TemporaryDirectory(prefix="obf_") as tmp:
         tmp_path = Path(tmp)
@@ -53,14 +146,9 @@ async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> s
         in_file.write_text(source, encoding="utf-8")
 
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, str(OBFUSCATOR_PY),
-            str(in_file),
-            "-o", str(out_file),
-            "--seed", str(seed),
-            "--min-size", str(min_size),
-            cwd=str(BASE_DIR),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            sys.executable, str(OBFUSCATOR_PY), str(in_file), "-o", str(out_file),
+            "--seed", str(seed), "--min-size", str(min_size), cwd=str(BASE_DIR),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
 
         try:
@@ -73,9 +161,6 @@ async def run_obfuscator(source: str, seed: int = 0, min_size: int = 23000) -> s
         if proc.returncode != 0:
             err = stderr.decode("utf-8", errors="replace").strip() or "(no stderr)"
             raise RuntimeError(f"Obfuscator exited with code {proc.returncode}:\n{err}")
-
-        if not out_file.is_file():
-            raise RuntimeError("Obfuscator produced no output file.")
 
         return out_file.read_text(encoding="utf-8")
 
@@ -92,105 +177,116 @@ async def upload_to_pastefy(source: str, username: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(PASTEFY_URL, data=form, headers=headers) as resp:
-                text = await resp.text()
-                
-                if resp.status not in (200, 201):
-                    print(f"[PASTEFY ERROR] Status: {resp.status}")
-                    print(f"[PASTEFY ERROR] Response: {text}")
-                    return None
-                
+                if resp.status not in (200, 201): return None
                 data = await resp.json()
-                
-                # CORRECCIÓN AQUÍ: La API devuelve los datos dentro de la llave 'paste'
                 paste_info = data.get("paste", {})
-                
-                # Intentamos obtener la raw_url directa
-                raw_url = paste_info.get("raw_url")
-                if raw_url:
-                    return raw_url
-                
-                # Si no hay raw_url, intentamos construirla con el ID
-                paste_id = paste_info.get("id")
-                if paste_id:
-                    return f"https://pastefy.app/{paste_id}/raw"
-                    
-                print(f"[PASTEFY ERROR] No 'id' or 'raw_url' in response: {data}")
-                return None
-
-    except Exception as e:
-        print(f"[PASTEFY EXCEPTION] {e}")
+                return paste_info.get("raw_url") or (f"https://pastefy.app/{paste_info.get('id')}/raw" if paste_info.get("id") else None)
+    except Exception:
         return None
 
-# ── /obf and /obfuscate ────────────────────────────────────────────────────
-@tree.command(name="obf", description="Obfuscate a Lua script and receive it via DM (Delta-ready).")
-@app_commands.describe(
-    code="Paste your Lua code here (optional if you upload a file).",
-    file="Upload a .lua or .txt file with your code (optional)."
-)
-async def obf(interaction: discord.Interaction, code: str = None, file: discord.Attachment = None):
+# ── EVENTO DE BIENVENIDA ───────────────────────────────────────────────────
+@bot.event
+async def on_member_join(member: discord.Member):
+    if not WELCOME_CHANNEL_ID: return
+    try:
+        channel = bot.get_channel(int(WELCOME_CHANNEL_ID))
+        if channel:
+            embed = discord.Embed(
+                title="Welcome!",
+                description=f"Welcome {member.mention} to the server! Protect your code from skidders. Go to #protect-your-code to get started.",
+                color=discord.Color.purple()
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            await channel.send(embed=embed)
+    except Exception as e:
+        print(f"[WELCOME ERROR] {e}")
+
+# ── COMANDOS DE AYUDA ──────────────────────────────────────────────────────
+def get_help_embed():
+    embed = discord.Embed(
+        title="Moonslot Bot - Quick Guide",
+        description="Protect and optimize your Lua scripts with our advanced tools.",
+        color=discord.Color.purple()
+    )
+    embed.add_field(name="/obf or /obfuscate", value="Usage: Provide `code` or upload a file.\nAction: Obfuscates your script and DMs you the file + a ready-to-use `loadstring`.", inline=False)
+    embed.add_field(name="/minify", value="Usage: Provide `code` or upload a file.\nAction: Compresses your code into a single line and sends it to your DMs.", inline=False)
+    embed.add_field(name="/help or .help", value="Usage: Displays this guide.", inline=False)
+    embed.set_footer(text="Keep your DMs open if you use commands inside a server.")
+    return embed
+
+@tree.command(name="help", description="Show all available commands.")
+async def help_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(embed=get_help_embed(), ephemeral=True)
+
+@bot.command(name="help")
+async def help_prefix(ctx):
+    await ctx.send(embed=get_help_embed())
+
+# ── COMANDO /MINIFY ────────────────────────────────────────────────────────
+@tree.command(name="minify", description="Minify your Lua script (sent via DM).")
+@app_commands.describe(code="Paste your Lua code here.", file="Upload a .lua or .txt file.")
+async def minify_cmd(interaction: discord.Interaction, code: str = None, file: discord.Attachment = None):
     await interaction.response.defer(ephemeral=True)
+
+    if not await check_dm_restriction(interaction):
+        return
 
     source = await get_source(interaction, code, file)
     if not source:
-        await interaction.followup.send(
-            embed=purple_embed("❌ Missing input", "You must provide `code` or upload a `file`."),
-            ephemeral=True
-        )
+        return await interaction.followup.send(embed=purple_embed("❌ Missing input", "Provide `code` or a `file`."), ephemeral=True)
+
+    try:
+        minified = minify_code(source)
+        file_obj = discord.File(io.BytesIO(minified.encode("utf-8")), filename="minified.lua")
+        
+        dm_embed = purple_embed("📦 Minified Code", "Here is your minified script.")
+        
+        if interaction.guild is not None:
+            await interaction.user.send(embed=dm_embed, file=file_obj)
+            await interaction.followup.send(embed=purple_embed("✅ Success", "Check your DMs."), ephemeral=True)
+        else:
+            await interaction.followup.send(embed=dm_embed, file=file_obj, ephemeral=False)
+            
+    except Exception as e:
+        await interaction.followup.send(embed=purple_embed("❌ Error", str(e)), ephemeral=True)
+
+# ── COMANDO /OBF ───────────────────────────────────────────────────────────
+@tree.command(name="obf", description="Obfuscate a Lua script (sent via DM).")
+@app_commands.describe(code="Paste your Lua code here.", file="Upload a .lua or .txt file.")
+async def obf(interaction: discord.Interaction, code: str = None, file: discord.Attachment = None):
+    await interaction.response.defer(ephemeral=True)
+
+    if not await check_dm_restriction(interaction):
         return
+
+    source = await get_source(interaction, code, file)
+    if not source:
+        return await interaction.followup.send(embed=purple_embed("❌ Missing input", "Provide `code` or a `file`."), ephemeral=True)
 
     try:
         obfuscated = await run_obfuscator(source)
-    except Exception as e:
-        await interaction.followup.send(
-            embed=purple_embed("❌ Obfuscation error", f"```{str(e)[:1800]}```"),
-            ephemeral=True
-        )
-        return
+        raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
 
-    raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
+        dm_description = "This is your protected code.\n\n"
+        if raw_url:
+            dm_description += f"**Loadstring:**\n```lua\nlocal s = game:HttpGet(\"{raw_url}\")\nlocal f, e = loadstring(s)\nif f then f() else warn(\"Error: \" .. tostring(e)) end\n```"
+        else:
+            dm_description += "⚠️ *Could not generate Pastefy URL.*"
 
-    dm_description = "This is your protected code.\n\n"
-    if raw_url:
-        loadstring_cmd = f'loadstring(game:HttpGet("{raw_url}"))()'
-        dm_description += f"**Loadstring:**\n```lua\n{loadstring_cmd}\n```"
-    else:
-        dm_description += "⚠️ *Could not generate Pastefy URL. Check bot logs.*"
+        dm_embed = purple_embed(f"👋 Hello {interaction.user.display_name}", dm_description)
+        file_obj = discord.File(io.BytesIO(obfuscated.encode("utf-8")), filename="obfuscated.txt")
 
-    dm_embed = purple_embed(
-        f"👋 Hello {interaction.user.display_name}",
-        dm_description
-    )
-    file_obj = discord.File(
-        io.BytesIO(obfuscated.encode("utf-8")),
-        filename="obfuscated.txt"
-    )
-
-    if interaction.guild is not None:
-        try:
+        if interaction.guild is not None:
             await interaction.user.send(embed=dm_embed, file=file_obj)
-            await interaction.followup.send(
-                embed=purple_embed("🔒 Script obfuscated", "Your script is obfuscated. Check your DMs."),
-                ephemeral=True
-            )
-        except discord.Forbidden:
-            await interaction.followup.send(
-                embed=purple_embed(
-                    "⚠️ DM failed",
-                    "I couldn't send you a DM. Please enable direct messages from server members and try again."
-                ),
-                ephemeral=True
-            )
-    else:
-        await interaction.followup.send(embed=dm_embed, file=file_obj, ephemeral=False)
+            await interaction.followup.send(embed=purple_embed("🔒 Script obfuscated", "Check your DMs."), ephemeral=True)
+        else:
+            await interaction.followup.send(embed=dm_embed, file=file_obj, ephemeral=False)
+            
+    except Exception as e:
+        await interaction.followup.send(embed=purple_embed("❌ Obfuscation error", f"```{str(e)[:1800]}```"), ephemeral=True)
 
 # Alias /obfuscate
-tree.add_command(
-    app_commands.Command(
-        name="obfuscate",
-        description="Alias of /obf: obfuscate your script and receive it via DM.",
-        callback=obf.callback
-    )
-)
+tree.add_command(app_commands.Command(name="obfuscate", description="Alias of /obf.", callback=obf.callback))
 
 # ── Startup ────────────────────────────────────────────────────────────────
 @bot.event
