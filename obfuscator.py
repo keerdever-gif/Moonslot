@@ -186,9 +186,13 @@ def generateSingleJunkLine() -> str:
     else: 
         return f'local {randomName()}={{}} for i=1,500 do {randomName()}[i]=string.rep("x",50) end {randomName()}=nil pcall(collectgarbage) '
 
-# ============================================================
-# OFUSCACIÓN LÉXICA
-# ============================================================
+def generate_soup_junk() -> str:
+    r = random.random()
+    if r < 0.2: return "local _x = math.random(1,100) "
+    elif r < 0.4: return "if _G then _G._dummy = 1 end "
+    elif r < 0.6: return "for _i=1,5 do local _y = _i * 2 end "
+    elif r < 0.8: return "pcall(function() return string.rep('a', 10) end) "
+    else: return "local _t = setmetatable({}, {__index = function() return 1 end}) "
 
 def obfuscate_identifiers(code: str) -> str:
     code = re.sub(r'\bt\(k\)', f'{randomName()}({randomName()})', code)
@@ -265,8 +269,6 @@ def build_vm_packed_payload(code_str: str) -> str:
     packed = buildStackObfuscation(packed) 
     return packed
 
-# ============================================================
-
 def applyCFF(blocks) -> str:
     stateVar = randomName()
     n = len(blocks)
@@ -279,8 +281,23 @@ def applyCFF(blocks) -> str:
     return lua
 
 # ============================================================
-# NUEVA VM REAL CON BASE64 (SIN TABLA DE BYTES GIGANTE)
+# NUEVA VM REAL CON BASE64 (EN FORMATO SOPA)
 # ============================================================
+
+def wrap_b64_assignment(pool, idx, b64):
+    r = random.random()
+    if r < 0.2:
+        return f"{pool}[{idx}] = '{b64}' "
+    elif r < 0.4:
+        mid = max(1, len(b64) // 2)
+        return f"{pool}[{idx}] = '{b64[:mid]}' .. '{b64[mid:]}' "
+    elif r < 0.6:
+        v = randomName()
+        return f"do local {v} = '{b64}' {pool}[{idx}] = {v} end "
+    elif r < 0.8:
+        return f"if type(tostring) == 'function' then {pool}[{idx}] = '{b64}' end "
+    else:
+        return f"{generate_soup_junk()} {pool}[{idx}] = '{b64}' {generateSingleJunkLine()} "
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
@@ -306,7 +323,6 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore += f"if c4 then table.insert(res, string.char(byte3)) end "
     vmCore += f"i = i + 4 end return table.concat(res) end "
     
-    # Encriptación y codificación Base64
     chunkSize = 50
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
@@ -323,12 +339,14 @@ def buildTrueVM(payloadStr: str) -> str:
                 encryptedBytes.append(ord(chunk[j]) ^ ((seed + globalIndex) & 0xFF))
                 globalIndex += 1
             b64_str = base64.b64encode(encryptedBytes).decode('ascii')
-            vmCore += f"{POOL}[{i}] = \"{b64_str}\" "
+            # Usamos la función envoltorio (sopa)
+            vmCore += wrap_b64_assignment(POOL, i, b64_str) + "\n"
             currentReal += 1
         else:
             fake_bytes = bytes([random.randint(0, 255) for _ in range(random.randint(5, 20))])
             b64_fake = base64.b64encode(fake_bytes).decode('ascii')
-            vmCore += f"{POOL}[{i}] = \"{b64_fake}\" "
+            # También usamos el envoltorio para la basura
+            vmCore += wrap_b64_assignment(POOL, i, b64_fake) + "\n"
             
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar = randomName()
@@ -370,7 +388,7 @@ def build18xVM(payloadStr: str) -> str:
 def buildStackObfuscation(code: str) -> str:
     nested = code
     for _ in range(random.randint(2, 5)):
-        nested = f"(function() pcall(function() {nested} end) end)()"
+        nested = f"(function() pcall(function() {nested} end) end)(); "
     return nested
 
 def getExtraProtections() -> str:
