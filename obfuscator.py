@@ -6,7 +6,7 @@ import base64
 HEADER = '''--[[
   Protected by Moonslot - Extreme Obfuscation
   Unauthorized reproduction or distribution is prohibited.
-]]'''
+]]\n'''
 
 ANTI_TAMPER_CORE = r'''
 local __at_code, __at_text = nil, nil
@@ -122,11 +122,11 @@ def generateSingleJunkLine() -> str:
 
 def generate_soup_junk() -> str:
     r = random.random()
-    if r < 0.2: return "local _x = math.random(1,100) "
-    elif r < 0.4: return "if _G then _G._dummy = 1 end "
-    elif r < 0.6: return "for _i=1,5 do local _y = _i * 2 end "
-    elif r < 0.8: return "pcall(function() return string.rep('a', 10) end) "
-    else: return "local _t = setmetatable({}, {__index = function() return 1 end}) "
+    if r < 0.2: return "local _x=math.random(1,100) "
+    elif r < 0.4: return "if _G then _G._dummy=1 end "
+    elif r < 0.6: return "for _i=1,5 do local _y=_i*2 end "
+    elif r < 0.8: return "pcall(function() return string.rep('a',10) end) "
+    else: return "local _t=setmetatable({},{__index=function() return 1 end}) "
 
 def obfuscate_identifiers(code: str) -> str:
     code = re.sub(r'\bt\(k\)', f'{randomName()}({randomName()})', code)
@@ -137,70 +137,6 @@ def obfuscate_identifiers(code: str) -> str:
             new_var = randomName()
             code = re.sub(rf'\b{var}\b', new_var, code)
     return code
-
-def minify_payload(code: str) -> str:
-    out = []
-    buf = []
-    i, n = 0, len(code)
-    st = 'normal'
-    close = None
-
-    def flush():
-        if buf:
-            line = ''.join(buf).strip()
-            if line:
-                out.append(line)
-            buf.clear()
-
-    while i < n:
-        c = code[i]
-        if st in ('dq', 'sq'):
-            buf.append(c)
-            if c == '\\' and i + 1 < n:
-                buf.append(code[i+1]); i += 2; continue
-            if (st == 'dq' and c == '"') or (st == 'sq' and c == "'"):
-                st = 'normal'
-            i += 1; continue
-        if st in ('lstr', 'lcom'):
-            if code.startswith(close, i):
-                buf.append(close); i += len(close); st = 'normal'; continue
-            buf.append(c)
-            if c == '\n':
-                flush()
-            i += 1; continue
-        if st == 'com':
-            if c == '\n':
-                flush(); st = 'normal'; i += 1; continue
-            i += 1; continue
-        if code.startswith('--', i):
-            m = re.match(r'--\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); close = ']' + eq + ']'
-                tok = code[i:i+3+len(eq)]; buf.append(tok); i += len(tok); st = 'lcom'; continue
-            st = 'com'; i += 2; continue
-        if c == '[':
-            m = re.match(r'\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); close = ']' + eq + ']'
-                tok = code[i:i+2+len(eq)]; buf.append(tok); i += len(tok); st = 'lstr'; continue
-        if c == '"': st = 'dq'; buf.append(c); i += 1; continue
-        if c == "'": st = 'sq'; buf.append(c); i += 1; continue
-        if c in ' \t\r':
-            if buf and buf[-1] != ' ':
-                buf.append(' ')
-            i += 1; continue
-        if c == '\n':
-            buf.append(' '); i += 1; continue
-        buf.append(c); i += 1
-    flush()
-    return ' '.join(out)
-
-def build_vm_packed_payload(code_str: str) -> str:
-    mini = minify_payload(code_str)
-    mini = obfuscate_identifiers(mini)
-    packed = build18xVM(mini)              
-    packed = buildStackObfuscation(packed) 
-    return packed
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
@@ -213,35 +149,22 @@ def applyCFF(blocks) -> str:
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
-# ============================================================
-# SOPA REAL: Fragmentación de Base64
-# ============================================================
-
 def generate_b64_soup(pool, idx, b64):
-    # Partimos el Base64 en trozos de 10 caracteres
     pieces = [b64[i:i+10] for i in range(0, len(b64), 10)]
-    # Creamos una concatenación con ".."
-    concat_expr = " .. ".join(f"'{p}'" for p in pieces)
+    pieces_table = ",".join(f"'{p}'" for p in pieces)
     
     r = random.random()
-    if r < 0.15:
-        return f"{pool}[{idx}] = {concat_expr} "
-    elif r < 0.30:
+    if r < 0.2:
+        return f"{pool}[{idx}]=table.concat({{{pieces_table}}})"
+    elif r < 0.4:
         v = randomName()
-        return f"do local {v} = {concat_expr} {pool}[{idx}] = {v} end "
-    elif r < 0.45:
-        v1, v2 = randomName(), randomName()
-        return f"if type(tostring) == 'function' then local {v1} = {concat_expr} {pool}[{idx}] = {v1} end "
-    elif r < 0.60:
-        # Usar table.concat
-        pieces_table = ", ".join(f"'{p}'" for p in pieces)
-        return f"{generate_soup_junk()} {pool}[{idx}] = table.concat({{{pieces_table}}}) "
-    elif r < 0.75:
-        return f"{pool}[{idx}] = (function() return {concat_expr} end)() "
-    elif r < 0.85:
-        return f"for i=1,1 do local _x = {concat_expr} {pool}[{idx}] = _x end "
+        return f"do local {v}=table.concat({{{pieces_table}}}) {pool}[{idx}]={v} end"
+    elif r < 0.6:
+        return f"if type(tostring)=='function' then {pool}[{idx}]=table.concat({{{pieces_table}}}) end"
+    elif r < 0.8:
+        return f"{generate_soup_junk()} {pool}[{idx}]=table.concat({{{pieces_table}}})"
     else:
-        return f"pcall(function() {pool}[{idx}] = {concat_expr} end) "
+        return f"{pool}[{idx}]=string.format('%s',table.concat({{{pieces_table}}}))"
 
 def buildTrueVM(payloadStr: str) -> str:
     STACK, KEY, ORDER, POOL, B_TABLE = randomName(), randomName(), randomName(), randomName(), randomName()
@@ -250,22 +173,22 @@ def buildTrueVM(payloadStr: str) -> str:
     B64_TABLE = randomName()
     DECODE_FUNC = randomName()
     
-    vmCore = f"local _opcodes={{'ADD','SUB','MOV','JMP','CALL'}} local _ = _opcodes[math.random(1,5)] "
+    vmCore = f"local _opcodes={{'ADD','SUB','MOV','JMP','CALL'}} local _=_opcodes[math.random(1,5)] "
     vmCore += f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
     vmCore += f"local {STACK}={{}} local {KEY}={seed} "
     
-    vmCore += f"local {B64_TABLE} = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
-    vmCore += f"local function {DECODE_FUNC}(data) local res = {{}} local i = 1 while i <= #data do "
-    vmCore += f"local b1, b2, b3, b4 = data:byte(i, i+3) "
-    vmCore += f"local c1, c2, c3, c4 = {B64_TABLE}:find(string.char(b1), 1, true), {B64_TABLE}:find(string.char(b2), 1, true), {B64_TABLE}:find(string.char(b3), 1, true), {B64_TABLE}:find(string.char(b4), 1, true) "
-    vmCore += f"c1, c2, c3, c4 = c1 - 1, c2 and c2 - 1, c3 and c3 - 1, c4 and c4 - 1 "
-    vmCore += f"local byte1 = math.floor(c1 * 4 + (c2 or 0) / 16) "
-    vmCore += f"local byte2 = math.floor(((c2 or 0) % 16) * 16 + (c3 or 0) / 4) "
-    vmCore += f"local byte3 = math.floor(((c3 or 0) % 4) * 64 + (c4 or 0)) "
-    vmCore += f"table.insert(res, string.char(byte1)) "
-    vmCore += f"if c3 then table.insert(res, string.char(byte2)) end "
-    vmCore += f"if c4 then table.insert(res, string.char(byte3)) end "
-    vmCore += f"i = i + 4 end return table.concat(res) end "
+    vmCore += f"local {B64_TABLE}='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
+    vmCore += f"local function {DECODE_FUNC}(data) local res={{}} local i=1 while i<=#data do "
+    vmCore += f"local b1,b2,b3,b4=data:byte(i,i+3) "
+    vmCore += f"local c1,c2,c3,c4={B64_TABLE}:find(string.char(b1),1,true),{B64_TABLE}:find(string.char(b2),1,true),{B64_TABLE}:find(string.char(b3),1,true),{B64_TABLE}:find(string.char(b4),1,true) "
+    vmCore += f"c1,c2,c3,c4=c1-1,c2 and c2-1,c3 and c3-1,c4 and c4-1 "
+    vmCore += f"local byte1=math.floor(c1*4+(c2 or 0)/16) "
+    vmCore += f"local byte2=math.floor(((c2 or 0)%16)*16+(c3 or 0)/4) "
+    vmCore += f"local byte3=math.floor(((c3 or 0)%4)*64+(c4 or 0)) "
+    vmCore += f"table.insert(res,string.char(byte1)) "
+    vmCore += f"if c3 then table.insert(res,string.char(byte2)) end "
+    vmCore += f"if c4 then table.insert(res,string.char(byte3)) end "
+    vmCore += f"i=i+4 end return table.concat(res) end "
     
     chunkSize = 50
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
@@ -292,17 +215,17 @@ def buildTrueVM(payloadStr: str) -> str:
             
     vmCore += f" local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar = randomName()
-    vmCore += f"local _gIdx=0 for _, {idxVar} in ipairs({ORDER}) do "
-    vmCore += f"local dec_chunk = {DECODE_FUNC}({POOL}[{idxVar}]) "
-    vmCore += f"for j=1, #dec_chunk do local b = dec_chunk:byte(j) "
-    vmCore += f"local real_b = math.floor(bit32.bxor(b, ({KEY} + _gIdx) % 256)) % 256 "
-    vmCore += f"table.insert({STACK}, {B_TABLE}[real_b]) _gIdx=_gIdx+1 end end "
-    vmCore += f"local _e = table.concat({STACK}) {STACK}=nil "
-    vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
-    vmCore += "local _loaders = {loadstring, load, _g.loadstring, (getfenv and getfenv().loadstring)} "
-    vmCore += "local _ls = nil for _,l in ipairs(_loaders) do if type(l)=='function' then _ls=l break end end "
-    vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
-    vmCore += "local _ok, _res = pcall(_ls, _e, \"=\") "
+    vmCore += f"local _gIdx=0 for _,{idxVar} in ipairs({ORDER}) do "
+    vmCore += f"local dec_chunk={DECODE_FUNC}({POOL}[{idxVar}]) "
+    vmCore += f"for j=1,#dec_chunk do local b=dec_chunk:byte(j) "
+    vmCore += f"local real_b=math.floor(bit32.bxor(b,({KEY}+_gIdx)%256))%256 "
+    vmCore += f"table.insert({STACK},{B_TABLE}[real_b]) _gIdx=_gIdx+1 end end "
+    vmCore += f"local _e=table.concat({STACK}) {STACK}=nil "
+    vmCore += "local _g=(getgenv and type(getgenv)=='function') and getgenv() or {} "
+    vmCore += "local _loaders={loadstring,load,_g.loadstring,(getfenv and getfenv().loadstring)} "
+    vmCore += "local _ls=nil for _,l in ipairs(_loaders) do if type(l)=='function' then _ls=l break end end "
+    vmCore += "if type(_ls)~='function' then _ls=function(s) return function() end end end "
+    vmCore += "local _ok,_res=pcall(_ls,_e,\"=\") "
     vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
     return vmCore
 
@@ -336,19 +259,23 @@ def buildStackObfuscation(code: str) -> str:
 def getExtraProtections() -> str:
     return """
 pcall(function()
-    if math.pi < 3.14 or math.pi > 3.15 then error("math corrupted") end
-    if type(tostring) ~= "function" then error("tostring missing") end
-    if type(pcall) ~= "function" then error("pcall missing") end
-    if string.len("a") ~= 1 then error("string.len broken") end
-    if math.floor(-1/10) ~= -1 then error("math.floor broken") end
+    if math.pi<3.14 or math.pi>3.15 then error("math corrupted") end
+    if type(tostring)~="function" then error("tostring missing") end
+    if type(pcall)~="function" then error("pcall missing") end
+    if string.len("a")~=1 then error("string.len broken") end
+    if math.floor(-1/10)~=-1 then error("math.floor broken") end
 end)
 """
 
 # ============================================================
-# MINIFICADOR AGRESIVO (ELIMINA ESPACIOS GIGANTES)
+# MINIFICADOR ÚNICO
 # ============================================================
 
-def true_minify(code):
+def minify_payload(code):
+    # Eliminar comentarios de Lua (-- y --[[ ]])
+    code = re.sub(r'--\[\[.*?\]\]', '', code, flags=re.DOTALL)
+    code = re.sub(r'--[^\n]*', '', code)
+
     tokens = []
     i, n = 0, len(code)
     while i < n:
@@ -394,6 +321,13 @@ def true_minify(code):
                 out.append(' ')
     return ''.join(out)
 
+def build_vm_packed_payload(code_str: str) -> str:
+    mini = minify_payload(code_str)
+    mini = obfuscate_identifiers(mini)
+    packed = build18xVM(mini)              
+    packed = buildStackObfuscation(packed) 
+    return packed
+
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
@@ -403,6 +337,7 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     extraProts = getExtraProtections()
     protection_payload = antiDebug + "\n" + extraProts + "\n" + ANTI_TAMPER_CORE
 
+    protection_payload = minify_payload(protection_payload)
     anti_tamper_final = build_vm_packed_payload(protection_payload)
 
     isLoadstringRegex = re.compile(
@@ -414,23 +349,24 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     final_user_script = build18xVM(payloadToProtect)
     final_user_script = buildStackObfuscation(final_user_script)
 
+    # El código sin el comentario de "Memory Confusion"
     final_code = (
-        f"{HEADER}\n\n"
-        f"-- Memory Confusion\n"
-        f"local _mc = {{}} for i=1,3000 do _mc[i] = string.rep('X', 50) end _mc = nil pcall(collectgarbage)\n"
-        f"{anti_tamper_final}\n"
+        f"local _mc={{}} for i=1,3000 do _mc[i]=string.rep('X',50) end _mc=nil pcall(collectgarbage) "
+        f"{anti_tamper_final} "
         f"{final_user_script}"
     )
     
-    # AHORA APLICAMOS LA MINIFICACIÓN AGRESIVA
-    return true_minify(final_code)
+    # Minificamos el código puro
+    minified_code = minify_payload(final_code)
+    
+    # Le pegamos tu marca de agua arriba y devolvemos
+    return HEADER + minified_code
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--min-size', type=int, default=23000)
 
     args, unknown = ap.parse_known_args()
 
