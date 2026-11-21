@@ -23,9 +23,7 @@ PASTEFY_API_KEY = os.getenv("PASTEFY_API_KEY")
 PASTEFY_URL = "https://pastefy.app/api/v2/paste"
 WELCOME_CHANNEL_ID = os.getenv("WELCOME_CHANNEL_ID")
 
-# Enlace de invitación actualizado
 INVITE_URL = os.getenv("INVITE_URL", "https://discord.gg/M5AfTVDxM")
-
 ALLOWED_GUILD_ID = 1572697383693713539
 
 BASE_DIR      = Path(__file__).resolve().parent
@@ -38,8 +36,10 @@ if not OBFUSCATOR_PY.is_file():
 # ── Bot setup ──────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.members = True
-intents.message_content = True # Necesario para .help
-bot = commands.Bot(command_prefix=".", intents=intents)
+intents.message_content = True 
+
+# FIX AQUÍ: help_command=None desactiva el comando help por defecto de discord.py
+bot = commands.Bot(command_prefix=".", intents=intents, help_command=None)
 tree = bot.tree
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -55,11 +55,9 @@ async def get_source(interaction, code, attachment):
     return None
 
 async def check_dm_restriction(interaction: discord.Interaction) -> bool:
-    """Verifica si el usuario está en un DM y si pertenece al servidor requerido."""
     if interaction.guild is not None:
-        return True # Está en un servidor, no hay restricción
+        return True
 
-    # Está en un DM, verificar servidor
     guild = bot.get_guild(ALLOWED_GUILD_ID)
     if not guild:
         try:
@@ -89,7 +87,6 @@ async def check_dm_restriction(interaction: discord.Interaction) -> bool:
     return True
 
 def minify_code(code_str):
-    # Eliminar comentarios
     code_str = re.sub(r'--\[\[.*?\]\]', '', code_str, flags=re.DOTALL)
     code_str = re.sub(r'--[^\n]*', '', code_str)
 
