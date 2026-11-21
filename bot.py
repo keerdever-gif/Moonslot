@@ -92,15 +92,28 @@ async def upload_to_pastefy(source: str, username: str) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(PASTEFY_URL, json=payload, headers=headers) as resp:
+                text = await resp.text()
+                
+                # Si falla, imprimimos el error en los logs de Railway para saber por qué
                 if resp.status not in (200, 201):
+                    print(f"[PASTEFY ERROR] Status {resp.status}: {text}")
                     return None
-                data = await resp.json()
+                
+                try:
+                    data = await resp.json()
+                except Exception as json_err:
+                    print(f"[PASTEFY JSON ERROR] {json_err} - Raw: {text}")
+                    return None
+                    
                 paste_id = data.get("id")
                 if paste_id:
                     return f"https://pastefy.app/{paste_id}/raw"
-    except Exception:
-        pass
-    return None
+                else:
+                    print(f"[PASTEFY ERROR] No ID found in response: {data}")
+                    return None
+    except Exception as e:
+        print(f"[PASTEFY EXCEPTION] {e}")
+        return None
 
 # ── /obf and /obfuscate ────────────────────────────────────────────────────
 @tree.command(name="obf", description="Obfuscate a Lua script and receive it via DM (Delta-ready).")
@@ -128,16 +141,14 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         )
         return
 
-    # Subimos el código ofuscado a Pastefy en secreto
     raw_url = await upload_to_pastefy(obfuscated, interaction.user.name)
 
-    # Preparamos el embed que contiene el loadstring
     dm_description = "This is your protected code.\n\n"
     if raw_url:
         loadstring_cmd = f'loadstring(game:HttpGet("{raw_url}"))()'
         dm_description += f"**Loadstring:**\n```lua\n{loadstring_cmd}\n```"
     else:
-        dm_description += "⚠️ *Could not generate Pastefy URL, but here is your file.*"
+        dm_description += "⚠️ *Could not generate Pastefy URL. Check bot logs on Railway for details.*"
 
     dm_embed = purple_embed(
         f"👋 Hello {interaction.user.display_name}",
@@ -148,13 +159,9 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
         filename="obfuscated.txt"
     )
 
-    # Lógica: Verificar si es un servidor o un DM
     if interaction.guild is not None:
-        # ── ES UN SERVIDOR ──
         try:
-            # Envía el MD
             await interaction.user.send(embed=dm_embed, file=file_obj)
-            # Avisa en el canal que revise sus DMs
             await interaction.followup.send(
                 embed=purple_embed("🔒 Script obfuscated", "Your script is obfuscated. Check your DMs."),
                 ephemeral=True
@@ -168,8 +175,6 @@ async def obf(interaction: discord.Interaction, code: str = None, file: discord.
                 ephemeral=True
             )
     else:
-        # ── ES UN MENSAJE DIRECTO (DM) ──
-        # Enviamos directamente la respuesta aquí sin decir "Check your DMs"
         await interaction.followup.send(embed=dm_embed, file=file_obj, ephemeral=False)
 
 # Alias /obfuscate
