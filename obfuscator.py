@@ -185,13 +185,92 @@ def generateSingleJunkLine() -> str:
     else: 
         return f'local {randomName()}={{}} for i=1,500 do {randomName()}[i]=string.rep("x",50) end {randomName()}=nil pcall(collectgarbage) '
 
-def generate_soup_junk() -> str:
-    r = random.random()
-    if r < 0.2: return "local _x = math.random(1,100) "
-    elif r < 0.4: return "if _G then _G._dummy = 1 end "
-    elif r < 0.6: return "for _i=1,5 do local _y = _i * 2 end "
-    elif r < 0.8: return "pcall(function() return string.rep('a', 10) end) "
-    else: return "local _t = setmetatable({}, {__index = function() return 1 end}) "
+# ============================================================
+# NUEVO: OFUSCACIÓN LÉXICA Y TABLAS ENCRIPTADAS
+# ============================================================
+
+def obfuscate_identifiers(code: str) -> str:
+    """Renombra variables locales y parámetros para ocultar '_index', 'lM', 't', 'k', etc."""
+    # Renombrado de parámetros comunes en setmetatable y funciones
+    code = re.sub(r'\bt\(k\)', f'{randomName()}({randomName()})', code)
+    code = re.sub(r'\b(lM|t|k)\b', lambda m: randomName() if m.group(0) in ('lM', 't', 'k') else m.group(0), code)
+    
+    # Renombrado de variables locales declaradas
+    local_vars = re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code)
+    for var in set(local_vars):
+        if var not in ['function', 'pcall', 'type', 'math', 'string', 'table', 'bit32', 'game', 'task']:
+            new_var = randomName()
+            code = re.sub(rf'\b{var}\b', new_var, code)
+    return code
+
+def minify_payload(code: str) -> str:
+    out = []
+    buf = []
+    i, n = 0, len(code)
+    st = 'normal'
+    close = None
+
+    def flush():
+        if buf:
+            line = ''.join(buf).strip()
+            if line:
+                out.append(line)
+            buf.clear()
+
+    while i < n:
+        c = code[i]
+        if st in ('dq', 'sq'):
+            buf.append(c)
+            if c == '\\' and i + 1 < n:
+                buf.append(code[i+1]); i += 2; continue
+            if (st == 'dq' and c == '"') or (st == 'sq' and c == "'"):
+                st = 'normal'
+            i += 1; continue
+        if st in ('lstr', 'lcom'):
+            if code.startswith(close, i):
+                buf.append(close); i += len(close); st = 'normal'; continue
+            buf.append(c)
+            if c == '\n':
+                flush()
+            i += 1; continue
+        if st == 'com':
+            if c == '\n':
+                flush(); st = 'normal'; i += 1; continue
+            i += 1; continue
+        if code.startswith('--', i):
+            m = re.match(r'--\[(=*)\[', code[i:])
+            if m:
+                eq = m.group(1); close = ']' + eq + ']'
+                tok = code[i:i+3+len(eq)]; buf.append(tok); i += len(tok); st = 'lcom'; continue
+            st = 'com'; i += 2; continue
+        if c == '[':
+            m = re.match(r'\[(=*)\[', code[i:])
+            if m:
+                eq = m.group(1); close = ']' + eq + ']'
+                tok = code[i:i+2+len(eq)]; buf.append(tok); i += len(tok); st = 'lstr'; continue
+        if c == '"': st = 'dq'; buf.append(c); i += 1; continue
+        if c == "'": st = 'sq'; buf.append(c); i += 1; continue
+        if c in ' \t\r':
+            if buf and buf[-1] != ' ':
+                buf.append(' ')
+            i += 1; continue
+        if c == '\n':
+            buf.append(' '); i += 1; continue
+        buf.append(c); i += 1
+    flush()
+    return ' '.join(out)
+
+def build_vm_packed_payload(code_str: str) -> str:
+    # Minificar
+    mini = minify_payload(code_str)
+    # Aplicar ofuscación léxica antes de empaquetar
+    mini = obfuscate_identifiers(mini)
+    # Empaquetar en 18 capas de VM
+    packed = build18xVM(mini)              
+    packed = buildStackObfuscation(packed) 
+    return packed
+
+# ============================================================
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
@@ -210,6 +289,8 @@ def buildTrueVM(payloadStr: str) -> str:
     vmCore = f"local _opcodes={{'ADD','SUB','MOV','JMP','CALL'}} local _ = _opcodes[math.random(1,5)] "
     vmCore += f"local {B_TABLE}={{}} for i=0,255 do local ok,r=pcall(string.char,i) if ok then {B_TABLE}[i]=r else {B_TABLE}[i]=string.char({{i}}) end end "
     vmCore += f"local {POOL}={{}} local {STACK}={{}} local {KEY}={seed} "
+    
+    # Encriptación XOR de bytes en la tabla
     chunkSize = 30
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
@@ -282,77 +363,6 @@ pcall(function()
 end)
 """
 
-# ============================================================
-# NUEVO: minificado + empaquetado SOLO con VM (sin _soup)
-# ============================================================
-
-def minify_payload(code: str) -> str:
-    """Minifica sin romper strings/comentarios: une líneas y colapsa espacios seguros."""
-    out = []
-    buf = []
-    i, n = 0, len(code)
-    st = 'normal'
-    close = None
-
-    def flush():
-        if buf:
-            line = ''.join(buf).strip()
-            if line:
-                out.append(line)
-            buf.clear()
-
-    while i < n:
-        c = code[i]
-        if st in ('dq', 'sq'):
-            buf.append(c)
-            if c == '\\' and i + 1 < n:
-                buf.append(code[i+1]); i += 2; continue
-            if (st == 'dq' and c == '"') or (st == 'sq' and c == "'"):
-                st = 'normal'
-            i += 1; continue
-        if st in ('lstr', 'lcom'):
-            if code.startswith(close, i):
-                buf.append(close); i += len(close); st = 'normal'; continue
-            buf.append(c)
-            if c == '\n':
-                flush()
-            i += 1; continue
-        if st == 'com':
-            if c == '\n':
-                flush(); st = 'normal'; i += 1; continue
-            i += 1; continue
-        if code.startswith('--', i):
-            m = re.match(r'--\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); close = ']' + eq + ']'
-                tok = code[i:i+3+len(eq)]; buf.append(tok); i += len(tok); st = 'lcom'; continue
-            st = 'com'; i += 2; continue
-        if c == '[':
-            m = re.match(r'\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); close = ']' + eq + ']'
-                tok = code[i:i+2+len(eq)]; buf.append(tok); i += len(tok); st = 'lstr'; continue
-        if c == '"': st = 'dq'; buf.append(c); i += 1; continue
-        if c == "'": st = 'sq'; buf.append(c); i += 1; continue
-        if c in ' \t\r':
-            if buf and buf[-1] != ' ':
-                buf.append(' ')
-            i += 1; continue
-        if c == '\n':
-            buf.append(' '); i += 1; continue
-        buf.append(c); i += 1
-    flush()
-    return ' '.join(out)
-
-def build_vm_packed_payload(code_str: str) -> str:
-    """Anti-tamper empaquetado SOLO con VM (sin _soup, sin tablas de bytes, sin strings gigantes)."""
-    mini = minify_payload(code_str)
-    packed = build18xVM(mini)              # VM real + 18 capas de VM
-    packed = buildStackObfuscation(packed) # capas de pcall/anon
-    return packed
-
-# ============================================================
-
 def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
@@ -362,8 +372,6 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     extraProts = getExtraProtections()
     protection_payload = antiDebug + "\n" + extraProts + "\n" + ANTI_TAMPER_CORE
 
-    # ANTES: anti_tamper_final = build_fragmented_payload(protection_payload, 100)
-    # AHORA: minificado + ofuscado con la propia VM, sin _soup ni bytes/octales
     anti_tamper_final = build_vm_packed_payload(protection_payload)
 
     isLoadstringRegex = re.compile(
@@ -389,7 +397,7 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--min-size', type=int, default=23000) # compatibilidad
+    ap.add_argument('--min-size', type=int, default=23000)
 
     args, unknown = ap.parse_known_args()
 
