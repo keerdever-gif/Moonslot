@@ -249,10 +249,10 @@ _safe_pcall(_check_timing_and_env)
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
-    return "_" + "".join(random.choice(_BASE36) for _ in range(random.randint(4, 7))) + str(random.randint(0, 999))
+    return "_" + random.choice("abcdefghijklmnopqrstuvwxyz") + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3))) + str(random.randint(0, 99))
 
 def generate_opaque_predicate() -> str:
-    r = random.randint(1, 100)
+    r = random.randint(1, 99)
     return f"(bit32.bxor({r},{r})==0)"
 
 def generateSingleJunkLine(pool_tags=None) -> str:
@@ -261,10 +261,10 @@ def generateSingleJunkLine(pool_tags=None) -> str:
     pool_snippet = ""
     if pool_tags:
         tag = random.choice(pool_tags)
-        pool_snippet = f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G if type(_rt)=='table'and _rt[{lua_quote(tag)}]==nil then _tampered=true error('Moonslot detect you',0)end "
+        pool_snippet = f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true error('Moonslot detect you',0)end "
     variants = [
         f"if {pred} then {pool_snippet}local {v}={random.randint(0,998)} end ",
-        f"local {v}={{}}for i=1,16 do {v}[i]=string.rep('x',3)end {pool_snippet}",
+        f"local {v}={{}}for i=1,8 do {v}[i]=string.rep('x',2)end {pool_snippet}",
         f"do local {v}=setmetatable({{}},{{__index=function()return math.random()end,__metatable='locked'}})end {pool_snippet}",
         f"if type(pcall)=='function'then pcall(function()if {pred} then return #('random')end end)end {pool_snippet}",
         f"local {v}=math.floor(math.random({random.randint(1,50)},500)){pool_snippet}",
@@ -279,7 +279,7 @@ def obfuscate_identifiers(code: str) -> str:
         'game', 'task', 'loadstring', 'getfenv', 'getgenv', 'setfenv', 'debug',
         'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
         'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
-        'clonefunction', 'hookfunction', 'collectgarbage', '_G', '_tampered', 'Spy'
+        'clonefunction', 'hookfunction', 'collectgarbage', '_G', '_RT', '_tampered', 'Spy'
     }
     local_vars = set(re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code))
     for var in local_vars:
@@ -291,7 +291,7 @@ def obfuscate_identifiers(code: str) -> str:
 def applyCFF(blocks) -> str:
     stateVar = randomName()
     n = len(blocks)
-    states = random.sample(range(1000, 99999), n + 1)
+    states = random.sample(range(100, 9999), n + 1)
     lua = f"local {stateVar}={states[0]} while true do "
     for i, block in enumerate(blocks):
         prefix = "if" if i == 0 else "elseif"
@@ -300,26 +300,24 @@ def applyCFF(blocks) -> str:
     return lua
 
 def generate_b64_soup(pool, idx, b64, pool_tags=None):
-    step = random.randint(5, 11)
+    step = random.randint(8, 16)
     pieces_ordered = [b64[i:i+step] for i in range(0, len(b64), step)]
     pieces_table = ",".join(f"'{p}'" for p in pieces_ordered)
 
     tag_guard = ""
-    if pool_tags and random.random() < 0.35:
+    if pool_tags and random.random() < 0.25:
         t = lua_quote(random.choice(pool_tags))
-        tag_guard = f"if type(_rt)=='table'and _rt[{t}]==nil then error('Moonslot detect you',0) end "
+        tag_guard = f"if _RT and _RT[{t}]==nil then error('Moonslot detect you',0)end "
 
     r = random.random()
-    if r < 0.25:
-        return f"{tag_guard}{pool}[{idx}]=table.concat({{{pieces_table}}})"
-    elif r < 0.5:
+    if r < 0.35:
+        return f"{tag_guard}{pool}[{idx}]=table.concat({{{pieces_table}}}) "
+    elif r < 0.7:
         v = randomName()
         return f"do local {v}=table.concat({{{pieces_table}}})if {generate_opaque_predicate()}then {pool}[{idx}]={v} end end {tag_guard}"
-    elif r < 0.75:
-        return f"{tag_guard}if {generate_opaque_predicate()}then {pool}[{idx}]=table.concat({{{pieces_table}}})end "
     else:
-        v1, v2 = randomName(), randomName()
-        return f"local {v1}={{{pieces_table}}} local {v2}=table.concat({v1}){pool}[{idx}]={v2} {tag_guard}"
+        v1 = randomName()
+        return f"local {v1}={{{pieces_table}}} {pool}[{idx}]=table.concat({v1}) {tag_guard}"
 
 def buildTrueVM(payloadStr: str, pool_tags) -> str:
     STACK, KEY1, KEY2, ORDER, POOL, B_TABLE = (
@@ -338,8 +336,7 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
 
     vmCore += (
         f"local function {CORRUPT_FN}() "
-        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-        f"if _tampered or type(_rt)~='table' or _rt[{check_tag}]~=true then "
+        f"if _tampered or type(_RT)~='table' or _RT[{check_tag}]~=true then "
         f"{KEY1}=({KEY1}+math.random(17,97))%256 {KEY2}=({KEY2}+math.random(13,89))%256 "
         f"error('Moonslot detect you',0) "
         f"end end {CORRUPT_FN}() "
@@ -360,18 +357,16 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += f"if c3 then table.insert(res,string.char(byte2))end if c4 then table.insert(res,string.char(byte3))end "
     vmCore += f"i=i+4 end return table.concat(res)end "
 
-    chunkSize = 44
+    chunkSize = 56
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
-    totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
-    if totalChunks < len(realChunks):
-        totalChunks = len(realChunks)
+    totalChunks = max(len(realChunks), int(len(realChunks) * 1.15) if len(realChunks) > 1 else 1)
     currentReal, globalIndex = 0, 0
 
     soup_items = []
     for i in range(1, totalChunks + 1):
         if currentReal < len(realChunks) and (
-            random.random() > 0.3 or (totalChunks - i) == (len(realChunks) - currentReal)
+            random.random() > 0.25 or (totalChunks - i) == (len(realChunks) - currentReal)
         ):
             realOrder.append(i)
             chunk = realChunks[currentReal]
@@ -385,7 +380,7 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
             soup_items.append(generate_b64_soup(POOL, i, b64_str, pool_tags))
             currentReal += 1
         else:
-            fake_bytes = bytes([random.randint(0, 255) for _ in range(random.randint(5, 18))])
+            fake_bytes = bytes([random.randint(0, 255) for _ in range(random.randint(5, 14))])
             b64_fake = base64.b64encode(fake_bytes).decode('ascii')
             soup_items.append(generate_b64_soup(POOL, i, b64_fake, pool_tags))
 
@@ -446,34 +441,30 @@ def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
         out += applyCFF(execBlocks)
     return out
 
-def buildMultiVM(payloadStr: str, pool_tags, layers: int = 4) -> str:
+def buildMultiVM(payloadStr: str, pool_tags, layers: int = 2) -> str:
     vm = buildTrueVM(payloadStr, pool_tags)
     for _ in range(layers):
-        vm = buildSingleVM(vm, random.randint(3, 4), pool_tags)
+        vm = buildSingleVM(vm, 3, pool_tags)
     return vm
 
 def buildStackObfuscation(code: str, pool_tags) -> str:
     nested = code
-    for _ in range(random.randint(2, 3)):
+    for _ in range(2):
         tag_chk = ""
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
-            tag_chk = (
-                f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-                f"if type(_rt)~='table' or _rt[{t}]~=true then error('Moonslot detect you',0)end "
-            )
+            tag_chk = f"if type(_RT)~='table' or _RT[{t}]~=true then error('Moonslot detect you',0)end "
         nested = f"(function()if type(pcall)=='function'then pcall(function(){tag_chk}{nested}end)else {tag_chk}{nested}end end)();"
     return nested
 
 def getExtraProtections(pool_tags) -> str:
     checks = "\n".join(
-        f'    if type(_rt) ~= "table" or _rt[{lua_quote(tag)}] ~= true then error("Moonslot detect you", 0) end'
+        f'    if type(_RT) ~= "table" or _RT[{lua_quote(tag)}] ~= true then error("Moonslot detect you", 0) end'
         for tag in pool_tags
     )
     return f"""
 if type(pcall) == "function" then
     pcall(function()
-        local _rt = (getgenv and type(getgenv) == "function") and getgenv() or _G
 {checks}
         if math.floor(1.5) ~= 1 then error("Moonslot detect you", 0) end
         if string.len("a") ~= 1 then error("Moonslot detect you", 0) end
@@ -484,31 +475,26 @@ end
 """
 
 def build22kBlock(pool_tags) -> str:
-    """Genera una sopa comprimida (~30% más compacta) sin columnas ordenadas."""
     tbl = randomName()
-    soup = [
-        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G ",
-        f"local {tbl}={{}}"
-    ]
-    target_chars = 15400
+    soup = [f"local {tbl}={{}}"]
+    target_chars = 6800
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
         v = randomName()
         k_idx = random.randint(1, 9999)
-        slen = random.randint(18, 54)
-        sval = "".join(random.choice(_BASE36) for _ in range(slen))
+        sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         mode = random.randint(0, 3)
         if mode == 0:
-            item = f"if {generate_opaque_predicate()}then if type(_rt)=='table'and _rt[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
+            item = f"if {generate_opaque_predicate()}then if _RT and _RT[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
         elif mode == 1:
-            item = f"local {v}='{sval}' if type(_rt)=='table'and _rt[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]={v}"
+            item = f"local {v}='{sval}' if _RT and _RT[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]={v}"
         elif mode == 2:
-            item = f"do local {v}={random.randint(1,999)} if type(_rt)=='table'and _rt[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
+            item = f"do local {v}={random.randint(1,999)} if _RT and _RT[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
         else:
             item = f"if {generate_opaque_predicate()}then {tbl}[{k_idx}]='{sval}' end"
         soup.append(item)
-    random.shuffle(soup[2:])
-    soup.append(f"{tbl}=nil")
+    random.shuffle(soup[1:])
+    soup.append(f"{tbl}=nil ")
     return "".join(soup)
 
 def minify_payload(code):
@@ -561,7 +547,7 @@ def minify_payload(code):
                 out.append(' ')
     return ''.join(out)
 
-def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 3) -> str:
+def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
@@ -570,7 +556,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 3) -> str:
     pool_tags = [generate_pool_tag() for _ in range(pool_count)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
     reg_pools = " ".join(
-        f"if type(_rt)=='table'then _rt[{lua_quote(tag)}]=true end"
+        f"if type(_RT)=='table'then _RT[{lua_quote(tag)}]=true end"
         for tag in pool_tags
     )
 
@@ -581,24 +567,20 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 3) -> str:
     antiDebug = "local _t=os.clock()for _=1,120000 do end if os.clock()-_t>5.0 then while true do if task and type(task.wait)=='function'then task.wait(0.1)end end end "
     extraProts = getExtraProtections(pool_tags)
 
-    final_user_script = buildMultiVM(obfuscated_user_code, pool_tags, layers=4)
+    final_user_script = buildMultiVM(obfuscated_user_code, pool_tags, layers=2)
     final_user_script = buildStackObfuscation(final_user_script, pool_tags)
 
     protection_payload = antiDebug + "\n" + extraProts + "\n" + at_core
     protection_payload = minify_payload(protection_payload)
-    anti_tamper_final = buildMultiVM(protection_payload, pool_tags, layers=3)
-
-    init_pools = (
-        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-        f"{reg_pools} "
-    )
+    anti_tamper_final = buildMultiVM(protection_payload, pool_tags, layers=2)
 
     filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
 
     final_code = (
-        f"local _mc={{}}for i=1,700 do _mc[i]=string.rep('X',32)end _mc=nil "
+        f"local _RT=(getgenv and type(getgenv)=='function')and getgenv()or _G "
+        f"local _mc={{}}for i=1,400 do _mc[i]=string.rep('X',24)end _mc=nil "
         f"if type(collectgarbage)=='function'then if type(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
-        f"{init_pools}"
+        f"{reg_pools} "
         f"{filler_22k}"
         f"{anti_tamper_final} "
         f"{final_user_script}"
@@ -611,7 +593,7 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--repeat-22k', type=int, default=3)
+    ap.add_argument('--repeat-22k', type=int, default=2)
 
     args, _ = ap.parse_known_args()
 
