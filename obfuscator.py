@@ -11,14 +11,11 @@ HEADER = '''--[[
 ANTI_TAMPER_CORE = r'''
 local function _get_integrity_offset()
     local offset = 0
-    -- 1. Verificación conductual
     local ok_bxor, res_bxor = pcall(function() return bit32.bxor(5, 5) end)
     if not ok_bxor or res_bxor ~= 0 then offset = offset + 1 end
     local ok_concat, res_concat = pcall(function() return table.concat({"a", "b"}) end)
     if not ok_concat or res_concat ~= "ab" then offset = offset + 1 end
     if type(pcall) ~= "function" or type(type) ~= "function" then offset = offset + 1 end
-
-    -- 2. Inspección de entorno
     local env = _G
     if type(getgenv) == "function" then
         local ok, genv = pcall(getgenv)
@@ -28,12 +25,6 @@ local function _get_integrity_offset()
         local ok, fenv = pcall(getfenv)
         if ok and type(fenv) ~= "table" then offset = offset + 1 end
     end
-    if type(setfenv) == "function" then
-        local ok, _ = pcall(setfenv)
-        if not ok then offset = offset + 1 end
-    end
-
-    -- 3. Detección de Env Loggers
     if type(debug) == "table" then
         if type(debug.getinfo) == "function" then
             local ok, info = pcall(debug.getinfo, 1)
@@ -44,8 +35,6 @@ local function _get_integrity_offset()
             if ok and hook ~= nil then offset = offset + 1 end
         end
     end
-
-    -- 4. Detección de hooks
     local hooked = env["isfunctionhooked"] or env["is_function_hooked"]
     if type(hooked) == "function" then
         local check_fns = {pcall, type, tostring, next, pairs, ipairs, rawget, rawset, setmetatable}
@@ -63,7 +52,6 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 def randomName() -> str:
     return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 9999))
 
-# ── VARIABLES OPACAS ──────────────────────────────────────────────────────
 def generate_opaque_var(var_name):
     val = random.randint(2, 50)
     r = random.randint(1, 100)
@@ -87,7 +75,6 @@ def generateSingleJunkLine() -> str:
     elif r < 0.8: return f"pcall(function() if {pred} then return string.len('random') end end) "
     else: return f"local {v}=math.floor(math.random(1, 500)) "
 
-# ── TOKENIZADOR Y MINIFICADOR ─────────────────────────────────────────────
 def tokenize_lua(code: str):
     tokens = []
     i, n = 0, len(code)
@@ -127,11 +114,10 @@ def minify_payload(code):
             if (tok[-1].isalnum() or tok[-1] == '_') and (nxt[0].isalnum() or nxt[0] == '_'): out.append(' ')
     return ''.join(out)
 
-# ── COMPILADOR A BYTECODE (PYTHON) ────────────────────────────────────────
 class BytecodeCompiler:
     def __init__(self):
         self.ops = []
-        self.const_pool = [None] # 1-based
+        self.const_pool = [None]
         self.const_map = {}
         self.next_reg = 0
         self.locals = {}
@@ -180,7 +166,6 @@ class BytecodeCompiler:
         tok = tokens[pos] if pos < len(tokens) else None
         if tok is None: return 0, pos
         
-        # Literales
         if tok.startswith('"') or tok.startswith("'"):
             val = self._unescape(tok[1:-1])
             r = self.new_reg()
@@ -200,14 +185,13 @@ class BytecodeCompiler:
         if tok == 'nil':
             r = self.new_reg(); self.emit(1, r, self.add_const(None)); return r, pos + 1
         
-        # Identificadores (Globales o Locales)
         if tok[0].isalpha() or tok[0] == '_':
             if tok in self.locals:
                 r = self.new_reg()
-                self.emit(10, r, self.locals[tok]) # MOVE
+                self.emit(10, r, self.locals[tok])
             else:
                 r = self.new_reg()
-                self.emit(2, r, self.add_const(tok)) # GET_GLOBAL
+                self.emit(2, r, self.add_const(tok))
             pos += 1
             
             while pos < len(tokens):
@@ -224,7 +208,7 @@ class BytecodeCompiler:
                         self.emit(3, r, self.add_const(method))
                         if pos < len(tokens) and tokens[pos] == '(':
                             pos += 1
-                            arg_regs = [r] # self
+                            arg_regs = [r]
                             while pos < len(tokens) and tokens[pos] != ')':
                                 ar, pos = self.compile_expr(tokens, pos)
                                 arg_regs.append(ar)
@@ -276,7 +260,6 @@ class BytecodeCompiler:
                     self.emit(6, r, 0)
                 else: self.emit(6, 0, 0)
             elif tok[0].isalpha() or tok[0] == '_':
-                # Detectar asignación simple: x = expr
                 if pos + 1 < n and tokens[pos+1] == '=':
                     name = tok; pos += 2
                     val_reg, pos = self.compile_expr(tokens, pos)
@@ -287,13 +270,30 @@ class BytecodeCompiler:
             else:
                 pos += 1
         
-        self.emit(6, 0, 0) # Final RET
+        self.emit(6, 0, 0)
         return self.ops, self.const_pool
 
 def compile_to_bytecode(code):
     tokens = tokenize_lua(code)
     compiler = BytecodeCompiler()
     return compiler.compile_statements(tokens)
+
+# ── CIFRADO DE CONSTANTES (XOR RODANTE) ───────────────────────────────────
+def encrypt_constant(val, seed, idx):
+    """Serializa con tag de tipo y cifra byte a byte."""
+    if isinstance(val, bool): s = "b:1" if val else "b:0"
+    elif isinstance(val, int): s = f"i:{val}"
+    elif isinstance(val, float): s = f"f:{val}"
+    elif isinstance(val, str): s = "s:" + val
+    elif val is None: s = "n:"
+    else: s = "s:" + str(val)
+    
+    b = s.encode('utf-8')
+    encrypted = []
+    for i, byte in enumerate(b):
+        key = (seed * (idx + 1) + 0x5A + i * 7) & 0xFF
+        encrypted.append(byte ^ key)
+    return encrypted
 
 def generate_bytecode(ops, const_pool, seed):
     encoded_ops = []
@@ -305,15 +305,15 @@ def generate_bytecode(ops, const_pool, seed):
         acc = ((acc * 31 + op + pc) % 256 + 256) % 256
         encoded_ops.append(f"{{{enc_op},{enc_a},{enc_b}}}")
     
-    def repr_val(v):
-        if v is None: return "nil"
-        if isinstance(v, bool): return "true" if v else "false"
-        if isinstance(v, str):
-            esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-            return f'"{esc}"'
-        return str(v)
+    # Ciframos cada constante como una tabla de bytes
+    cp_entries = []
+    for idx, val in enumerate(const_pool):
+        if idx == 0:  # placeholder None
+            continue
+        encrypted = encrypt_constant(val, seed, idx)
+        cp_entries.append("{" + ",".join(str(b) for b in encrypted) + "}")
     
-    cp_str = "{" + ",".join(repr_val(c) for c in const_pool[1:]) + "}"
+    cp_str = "{" + ",".join(cp_entries) + "}"
     return "{" + ",".join(encoded_ops) + "}", cp_str
 
 # ── POLIMORFISMO (CAPAS) ──────────────────────────────────────────────────
@@ -386,6 +386,24 @@ def buildTrueVM(payloadStr: str, config) -> str:
     vmCore += f"local _consts = {const_pool_str} "
     vmCore += f"local _ops = {encoded_ops_str} "
     
+    # Función de descifrado de constantes (en caliente)
+    vmCore += "local function _dec(idx) "
+    vmCore += "  local e = _consts[idx] if not e then return nil end "
+    vmCore += "  local s = {} "
+    vmCore += "  for i = 1, #e do "
+    vmCore += "    local key = bit32.band((_seed * (idx + 1)) + 0x5A + (i - 1) * 7, 0xFF) "
+    vmCore += "    s[i] = string.char(bit32.bxor(e[i], key)) "
+    vmCore += "  end "
+    vmCore += "  local str = table.concat(s) "
+    vmCore += "  local tag = string.sub(str, 1, 2) "
+    vmCore += "  if tag == 'n:' then return nil "
+    vmCore += "  elseif tag == 'b:' then return string.sub(str, 3) == '1' "
+    vmCore += "  elseif tag == 'i:' then return tonumber(string.sub(str, 3)) "
+    vmCore += "  elseif tag == 'f:' then return tonumber(string.sub(str, 3)) "
+    vmCore += "  elseif tag == 's:' then return string.sub(str, 3) "
+    vmCore += "  else return str end "
+    vmCore += "end "
+    
     vmCore += "local pc = 1 local acc = _seed local regs = {} local running = true "
     vmCore += "local env = (getgenv and type(getgenv)=='function') and getgenv() or _G "
     vmCore += "local unpack_fn = table.unpack or unpack "
@@ -398,17 +416,17 @@ def buildTrueVM(payloadStr: str, config) -> str:
     vmCore += "acc = ((acc * 31 + op + pc) % 256 + 256) % 256 "
     vmCore += "pc = pc + 1 "
     
-    vmCore += "if op == 1 then regs[a] = _consts[b] "
-    vmCore += "elseif op == 2 then regs[a] = env[_consts[b]] "
-    vmCore += "elseif op == 3 then regs[a] = regs[a][_consts[b]] "
+    vmCore += "if op == 1 then regs[a] = _dec(b) "
+    vmCore += "elseif op == 2 then regs[a] = env[_dec(b)] "
+    vmCore += "elseif op == 3 then regs[a] = regs[a][_dec(b)] "
     vmCore += "elseif op == 4 then "
     vmCore += "  local fn = regs[a] local args = {} "
     vmCore += "  for i = 1, b do args[i] = regs[a + i] end "
     vmCore += "  if type(fn) == 'function' then regs[a] = fn(unpack_fn(args)) end "
     vmCore += "elseif op == 5 then pc = b "
     vmCore += "elseif op == 6 then running = false "
-    vmCore += "elseif op == 7 then env[_consts[a]] = regs[b] "
-    vmCore += "elseif op == 8 then regs[a][_consts[b]] = regs[a+1] "
+    vmCore += "elseif op == 7 then env[_dec(a)] = regs[b] "
+    vmCore += "elseif op == 8 then regs[a][_dec(b)] = regs[a+1] "
     vmCore += "elseif op == 9 then if not regs[a] then pc = b end "
     vmCore += "elseif op == 10 then regs[a] = regs[b] "
     vmCore += "end end "
@@ -446,8 +464,8 @@ def main():
     parser.add_argument('-o', '--output', default='obfuscated.lua', help="Archivo de salida")
     parser.add_argument('--seed', type=int, default=0, help="Semilla")
     
-    # 18 CAPAS POR DEFECTO
-    parser.add_argument('--vm-layers', type=int, default=18, help="Capas de VM (default: 18)")
+    # 28 capas por defecto
+    parser.add_argument('--vm-layers', type=int, default=28, help="Capas de VM (default: 28)")
     
     parser.add_argument('--anti-tamper-layers', type=int, default=3, help="Capas Anti-Tamper")
     parser.add_argument('--opaque-vars', type=int, default=2, help="Variables opacas")
