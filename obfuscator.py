@@ -12,7 +12,7 @@ ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 
 def hidden_alert_call() -> str:
-    return f"_er(_ch({ALERT_BYTES}),0)"
+    return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
@@ -55,7 +55,9 @@ end
 
 local function _dtc()
     _tampered = true
-    error(_msg, 0)
+    if type(error) == "function" then
+        error(_msg, 0)
+    end
 end
 
 local function _check_pools()
@@ -451,13 +453,13 @@ def buildPolymorphicVM(innerCode: str, pool_tags=None, handlerCount: int = 3) ->
 
     if style == "closure_tbl":
         fnVar = randomName()
-        return f"local {STORE}={{}} " + " ".join(handlers) + f" local {fnVar}={STORE}[{realIdx+1}] if {generate_opaque_predicate()}then {fnVar}({{}})end "
+        return f"local {STORE}={{}} " + " ".join(handlers) + f" local {fnVar}={STORE}[{realIdx+1}] if _T({fnVar})=='function' and {generate_opaque_predicate()}then {fnVar}({{}})end "
 
     out = f"local {STORE}={{}}local {MT}={{__index=function(t,k)return {STORE}[k]end,__metatable='locked'}}local {DISPATCH}=setmetatable({{}},{MT}) "
     out += " ".join(handlers) + " "
 
     if style == "cff":
-        execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
+        execBlocks = [f"if _T({DISPATCH}[{i+1}])=='function'then {DISPATCH}[{i+1}]({{}})end " for i in range(handlerCount)]
         out += applyCFF(execBlocks)
     elif style == "ifchain":
         sel = randomName()
@@ -465,10 +467,10 @@ def buildPolymorphicVM(innerCode: str, pool_tags=None, handlerCount: int = 3) ->
         out += f"local {sel}={target} "
         for i in range(handlerCount):
             kw = "if" if i == 0 else "elseif"
-            out += f"{kw} {sel}=={i+1} and {generate_opaque_predicate()} then {DISPATCH}[{i+1}]({{}}) "
+            out += f"{kw} {sel}=={i+1} and {generate_opaque_predicate()} and _T({DISPATCH}[{i+1}])=='function' then {DISPATCH}[{i+1}]({{}}) "
         out += "end "
     else:
-        execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
+        execBlocks = [f"if _T({DISPATCH}[{i+1}])=='function'then {DISPATCH}[{i+1}]({{}})end " for i in range(handlerCount)]
         out += applyCFF(execBlocks)
     return out
 
@@ -493,17 +495,17 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
 
 def getExtraProtections(pool_tags) -> str:
     checks = "\n".join(
-        f'    if type(_RT) ~= "table" or _RT[{lua_quote(tag)}] ~= true then error(string.char({ALERT_BYTES}), 0) end'
+        f'    if type(_RT) ~= "table" or _RT[{lua_quote(tag)}] ~= true then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
         for tag in pool_tags
     )
     return f"""
 if type(pcall) == "function" then
     pcall(function()
 {checks}
-        if math.floor(1.5) ~= 1 then error(string.char({ALERT_BYTES}), 0) end
-        if string.len("a") ~= 1 then error(string.char({ALERT_BYTES}), 0) end
+        if math.floor(1.5) ~= 1 and type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end
+        if string.len("a") ~= 1 and type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end
         local t = setmetatable({{}}, {{__metatable = "locked"}})
-        if getmetatable(t) ~= "locked" then error(string.char({ALERT_BYTES}), 0) end
+        if getmetatable(t) ~= "locked" and type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end
     end)
 end
 """
@@ -511,7 +513,7 @@ end
 def build22kBlock(pool_tags) -> str:
     tbl = randomName()
     soup = [f"local {tbl}={{}}"]
-    target_chars = 3200
+    target_chars = 2880
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
         v = randomName()
@@ -588,7 +590,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         return '--ERROR'
     random.seed(seed)
 
-    pool_count = 20
+    pool_count = 18
     pool_tags = [generate_pool_tag() for _ in range(pool_count)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
     reg_pools = " ".join(
@@ -614,7 +616,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
 
     final_code = (
         f"{BOOTSTRAP_HELPERS}"
-        f"local _mc={{}}for i=1,400 do _mc[i]=_rp('X',24)end _mc=nil "
+        f"local _mc={{}}for i=1,360 do _mc[i]=_rp('X',24)end _mc=nil "
         f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
         f"{reg_pools} "
         f"{filler_22k}"
