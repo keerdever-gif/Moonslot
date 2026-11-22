@@ -12,7 +12,7 @@ ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 
 def hidden_alert_call() -> str:
-    return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
+    return f"_er(_ch({ALERT_BYTES}),0)"
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
@@ -276,39 +276,91 @@ def generate_opaque_predicate() -> str:
     r = random.randint(1, 99)
     return f"(_bx({r},{r})==0)"
 
-def generateSingleJunkLine(pool_tags=None) -> str:
-    pred = generate_opaque_predicate()
-    v = randomName()
-    pool_snippet = ""
-    if pool_tags:
-        tag = random.choice(pool_tags)
-        pool_snippet = buildPolymorphicVM(f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true {hidden_alert_call()} end ", pool_tags)
-    variants = [
-        f"if {pred} then {pool_snippet}local {v}={random.randint(0,998)} end ",
-        f"local {v}={{}}for i=1,8 do {v}[i]=_rp('x',2)end {pool_snippet}",
-        f"do local {v}=setmetatable({{}},{{__index=function()return _rn()end,__metatable='locked'}})end {pool_snippet}",
-        f"if _T(pcall)=='function'then pcall(function()if {pred} then return #('random')end end)end {pool_snippet}",
-        f"local {v}=_fl(_rn({random.randint(1,50)},500)){pool_snippet}",
-    ]
-    return random.choice(variants)
+def _tokenize_lua(code: str):
+    tokens = []
+    i, n = 0, len(code)
+    while i < n:
+        c = code[i]
+        if c in '"\'':
+            quote = c
+            j = i + 1
+            while j < n and code[j] != quote:
+                if code[j] == '\\':
+                    j += 2
+                    continue
+                j += 1
+            tokens.append(("str", code[i:j+1]))
+            i = j + 1
+        elif c == '[':
+            m = re.match(r'\[(=*)\[', code[i:])
+            if m:
+                eq = m.group(1)
+                close = ']' + eq + ']'
+                j = code.find(close, i + len(m.group(0)))
+                if j != -1:
+                    tokens.append(("str", code[i:j+len(close)]))
+                    i = j + len(close)
+                    continue
+            tokens.append(("sym", c))
+            i += 1
+        elif c.isspace():
+            tokens.append(("ws", c))
+            i += 1
+        elif c.isalnum() or c == '_':
+            j = i
+            while j < n and (code[j].isalnum() or code[j] == '_'):
+                j += 1
+            tokens.append(("ident", code[i:j]))
+            i = j
+        else:
+            tokens.append(("sym", c))
+            i += 1
+    return tokens
 
 def obfuscate_identifiers(code: str) -> str:
     keywords = {
         'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
         'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true',
         'until', 'while', 'pcall', 'type', 'math', 'string', 'table', 'bit32',
-        'game', 'task', 'loadstring', 'getfenv', 'getgenv', 'setfenv', 'debug',
+        'game', 'task', 'loadstring', 'load', 'getfenv', 'getgenv', 'setfenv', 'debug',
         'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
         'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
         'clonefunction', 'hookfunction', 'collectgarbage', '_G', '_RT', '_tampered', 'Spy',
         '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
     }
-    local_vars = set(re.findall(r'\blocal\s+(?:function\s+)?([a-zA-Z_][a-zA-Z0-9_]*)', code))
-    for var in local_vars:
-        if var not in keywords and len(var) > 1:
-            new_var = randomName()
-            code = re.sub(rf'(?<![\w\.\:])\b{re.escape(var)}\b(?![\w\:])', new_var, code)
-    return code
+    tokens = _tokenize_lua(code)
+    local_vars = set()
+    for idx, (kind, val) in enumerate(tokens):
+        if kind == "ident" and val == "local":
+            j = idx + 1
+            while j < len(tokens) and tokens[j][0] == "ws":
+                j += 1
+            if j < len(tokens) and tokens[j][0] == "ident" and tokens[j][1] == "function":
+                j += 1
+                while j < len(tokens) and tokens[j][0] == "ws":
+                    j += 1
+            if j < len(tokens) and tokens[j][0] == "ident":
+                vname = tokens[j][1]
+                if vname not in keywords and len(vname) > 1:
+                    local_vars.add(vname)
+
+    mapping = {v: randomName() for v in local_vars}
+    if not mapping:
+        return code
+
+    out = []
+    for idx, (kind, val) in enumerate(tokens):
+        if kind == "ident" and val in mapping:
+            prev_sym = ""
+            for p in range(idx - 1, -1, -1):
+                if tokens[p][0] != "ws":
+                    prev_sym = tokens[p][1]
+                    break
+            if prev_sym not in (".", ":"):
+                out.append(mapping[val])
+                continue
+        out.append(val)
+    return "".join(out)
 
 def applyCFF(blocks) -> str:
     stateVar = randomName()
@@ -329,7 +381,7 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
     tag_guard = ""
     if pool_tags and random.random() < 0.25:
         t = lua_quote(random.choice(pool_tags))
-        tag_guard = buildPolymorphicVM(f"if _RT and _RT[{t}]==nil then {hidden_alert_call()} end ", pool_tags)
+        tag_guard = buildPolymorphicVM(f"if _RT and _RT[{t}]==nil then _tampered=true {hidden_alert_call()} end ", pool_tags)
 
     r = random.random()
     if r < 0.35:
@@ -351,10 +403,19 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     B64_TABLE = randomName()
     DECODE_FUNC = randomName()
     CORRUPT_FN = randomName()
+    HEAL_FN = randomName()
     check_tag = lua_quote(random.choice(pool_tags))
 
     vmCore = f"local _tampered=false local {POOL}={{}}local {B_TABLE}={{}}for i=0,255 do {B_TABLE}[i]=_ch(i)end "
     vmCore += f"local {STACK}={{}} local {KEY1}={seed1} local {KEY2}={seed2} "
+
+    # Etapa de auto-reparación / hidratación de entorno antes de validar y ejecutar
+    vmCore += (
+        f"local function {HEAL_FN}() "
+        f"if _T(_RT)~='table' then _RT=_G end "
+        f"if _T(_RT)=='table' and _RT[{check_tag}]==nil then _RT[{check_tag}]=true end "
+        f"end {HEAL_FN}() "
+    )
 
     vmCore += (
         f"local function {CORRUPT_FN}() "
@@ -423,7 +484,7 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += "local _fenv=(getfenv and _T(getfenv)=='function' and _T(pcall)=='function' and pcall(getfenv,0))and getfenv(0)or _G "
     vmCore += "local _env=_T(_g)=='table'and setmetatable({},{__index=_g})or _G "
     vmCore += "local _rg=_T(rawget)=='function'and rawget or function(t,k)return _T(t)=='table'and t[k]or nil end "
-    vmCore += "local _ls=_rg(_g,_ls_key)or _rg(_fenv,_ls_key)or _rg(_G,_ls_key)or loadstring "
+    vmCore += "local _ls=_rg(_g,_ls_key)or _rg(_fenv,_ls_key)or _rg(_G,_ls_key)or (_T(loadstring)=='function'and loadstring or nil)or _rg(_g,'load')or _rg(_G,'load')or (_T(load)=='function'and load or nil) "
     vmCore += "if _T(_ls)=='function' and _T(_e)=='string' and #_e>0 then "
     vmCore += "local _ok,_res=_T(pcall)=='function'and pcall(_ls,_e)or true,_ls(_e) "
     vmCore += "if _ok and _T(_res)=='function' then "
@@ -519,7 +580,7 @@ def build22kBlock(pool_tags) -> str:
         v = randomName()
         k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
-        guarded = buildPolymorphicVM(f"if _RT and _RT[{tag}]==nil then {hidden_alert_call()} end ", pool_tags)
+        guarded = buildPolymorphicVM(f"if _RT and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end ", pool_tags)
         mode = random.randint(0, 3)
         if mode == 0:
             item = f"if {generate_opaque_predicate()}then {guarded}{tbl}[{k_idx}]='{sval}' end"
@@ -538,49 +599,14 @@ def minify_payload(code):
     code = re.sub(r'--\[\[.*?\]\]', '', code, flags=re.DOTALL)
     code = re.sub(r'--[^\n]*', '', code)
 
-    tokens = []
-    i, n = 0, len(code)
-    while i < n:
-        c = code[i]
-        if c in '"\'':
-            quote = c
-            j = i + 1
-            while j < n and code[j] != quote:
-                if code[j] == '\\':
-                    j += 2
-                    continue
-                j += 1
-            tokens.append(code[i:j+1])
-            i = j + 1
-        elif c == '[':
-            m = re.match(r'\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1)
-                close = ']' + eq + ']'
-                j = code.find(close, i)
-                if j != -1:
-                    tokens.append(code[i:j+len(close)])
-                    i = j + len(close)
-                    continue
-            tokens.append(c)
-            i += 1
-        elif c.isspace():
-            i += 1
-        elif c.isalnum() or c == '_':
-            j = i
-            while j < n and (code[j].isalnum() or code[j] == '_'):
-                j += 1
-            tokens.append(code[i:j])
-            i = j
-        else:
-            tokens.append(c)
-            i += 1
+    tokens = _tokenize_lua(code)
+    meaningful = [(k, v) for (k, v) in tokens if k != "ws"]
 
     out = []
-    for idx, tok in enumerate(tokens):
+    for idx, (kind, tok) in enumerate(meaningful):
         out.append(tok)
-        if idx < len(tokens) - 1:
-            nxt = tokens[idx+1]
+        if idx < len(meaningful) - 1:
+            _, nxt = meaningful[idx + 1]
             if (tok[-1].isalnum() or tok[-1] == '_') and (nxt[0].isalnum() or nxt[0] == '_'):
                 out.append(' ')
     return ''.join(out)
