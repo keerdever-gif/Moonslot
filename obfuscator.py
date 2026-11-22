@@ -275,7 +275,7 @@ def generateSingleJunkLine(pool_tags=None) -> str:
     pool_snippet = ""
     if pool_tags:
         tag = random.choice(pool_tags)
-        pool_snippet = f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true _er('Moonslot detect you',0)end "
+        pool_snippet = buildPolymorphicVM(f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true _er('Moonslot detect you',0)end ", pool_tags)
     variants = [
         f"if {pred} then {pool_snippet}local {v}={random.randint(0,998)} end ",
         f"local {v}={{}}for i=1,8 do {v}[i]=_rp('x',2)end {pool_snippet}",
@@ -322,7 +322,7 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
     tag_guard = ""
     if pool_tags and random.random() < 0.25:
         t = lua_quote(random.choice(pool_tags))
-        tag_guard = f"if _RT and _RT[{t}]==nil then _er('Moonslot detect you',0)end "
+        tag_guard = buildPolymorphicVM(f"if _RT and _RT[{t}]==nil then _er('Moonslot detect you',0)end ", pool_tags)
 
     r = random.random()
     if r < 0.35:
@@ -424,20 +424,32 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += "if _T(pcall)=='function' then pcall(_res)else _res()end end end "
     return vmCore
 
-def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
-    style = random.choice(["metatable", "ifchain", "cff"])
+def buildPolymorphicVM(innerCode: str, pool_tags=None, handlerCount: int = 3) -> str:
+    style = random.choice(["metatable", "ifchain", "cff", "closure_tbl"])
     DISPATCH = randomName()
     STORE = randomName()
     MT = randomName()
-    out = f"local {STORE}={{}}local {MT}={{__index=function(t,k)return {STORE}[k]end,__metatable='locked'}}local {DISPATCH}=setmetatable({{}},{MT}) "
     realIdx = random.randint(0, handlerCount - 1)
     handlers = []
+
     for i in range(handlerCount):
+        junk = random.choice([
+            f"local {randomName()}={random.randint(1,999)} ",
+            f"if {generate_opaque_predicate()}then local {randomName()}={_BASE36[random.randint(0,35)]!r} end ",
+            "",
+        ])
         if i == realIdx:
-            handlers.append(f"{STORE}[{i+1}]=function(lM){generateSingleJunkLine(pool_tags)}{innerCode}end")
+            handlers.append(f"{STORE}[{i+1}]=function(lM){junk}{innerCode}end")
         else:
-            handlers.append(f"{STORE}[{i+1}]=function(lM){generateSingleJunkLine()}return nil end")
+            handlers.append(f"{STORE}[{i+1}]=function(lM){junk}return nil end")
     random.shuffle(handlers)
+
+    if style == "closure_tbl":
+        fnVar = randomName()
+        out = f"local {STORE}={{}} " + " ".join(handlers) + f" local {fnVar}={STORE}[{realIdx+1}] if {generate_opaque_predicate()}then {fnVar}({{}})end "
+        return out
+
+    out = f"local {STORE}={{}}local {MT}={{__index=function(t,k)return {STORE}[k]end,__metatable='locked'}}local {DISPATCH}=setmetatable({{}},{MT}) "
     out += " ".join(handlers) + " "
 
     if style == "cff":
@@ -456,6 +468,9 @@ def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
         out += applyCFF(execBlocks)
     return out
 
+def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
+    return buildPolymorphicVM(innerCode, pool_tags, handlerCount=handlerCount)
+
 def buildMultiVM(payloadStr: str, pool_tags, layers: int = 2) -> str:
     vm = buildTrueVM(payloadStr, pool_tags)
     for _ in range(layers):
@@ -468,7 +483,7 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
         tag_chk = ""
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
-            tag_chk = f"if _T(_RT)~='table' or _RT[{t}]~=true then _er('Moonslot detect you',0)end "
+            tag_chk = buildPolymorphicVM(f"if _T(_RT)~='table' or _RT[{t}]~=true then _er('Moonslot detect you',0)end ", pool_tags)
         nested = f"(function()if _T(pcall)=='function'then pcall(function(){tag_chk}{nested}end)else {tag_chk}{nested}end end)();"
     return nested
 
@@ -498,13 +513,14 @@ def build22kBlock(pool_tags) -> str:
         v = randomName()
         k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
+        guarded = buildPolymorphicVM(f"if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end ", pool_tags)
         mode = random.randint(0, 3)
         if mode == 0:
-            item = f"if {generate_opaque_predicate()}then if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
+            item = f"if {generate_opaque_predicate()}then {guarded}{tbl}[{k_idx}]='{sval}' end"
         elif mode == 1:
-            item = f"local {v}='{sval}' if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end {tbl}[{k_idx}]={v}"
+            item = f"local {v}='{sval}' {guarded}{tbl}[{k_idx}]={v}"
         elif mode == 2:
-            item = f"do local {v}={random.randint(1,999)} if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
+            item = f"do local {v}={random.randint(1,999)} {guarded}{tbl}[{k_idx}]='{sval}' end"
         else:
             item = f"if {generate_opaque_predicate()}then {tbl}[{k_idx}]='{sval}' end"
         soup.append(item)
