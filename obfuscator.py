@@ -3,457 +3,301 @@ import random
 import argparse
 
 HEADER = '''--[[
-  Protected by Moonslot 1.000.01v
-  Join our Discord: https://discord.gg/M5AfTVDxM
-]]\n'''
+  Protected by Moonslot
+  Unauthorized reproduction or distribution is prohibited.
+]]'''
 
-# ── ANTI-TAMPER SILENCIOSO Y DEFENSIVO ────────────────────────────────────
 ANTI_TAMPER_CORE = r'''
-local function _get_integrity_offset()
-    local offset = 0
-    local ok_bxor, res_bxor = pcall(function() return bit32.bxor(5, 5) end)
-    if not ok_bxor or res_bxor ~= 0 then offset = offset + 1 end
-    local ok_concat, res_concat = pcall(function() return table.concat({"a", "b"}) end)
-    if not ok_concat or res_concat ~= "ab" then offset = offset + 1 end
-    if type(pcall) ~= "function" or type(type) ~= "function" then offset = offset + 1 end
-    local env = _G
-    if type(getgenv) == "function" then
-        local ok, genv = pcall(getgenv)
-        if ok and type(genv) == "table" then env = genv end
-    end
+local __at_code, __at_text = nil, nil
+local __R = {
+    ["0x07"]="CRITICAL_FUNCTION_HOOKED_BOOT", ["0x09"]="CRITICAL_FUNCTION_HOOKED_RUNTIME",
+    ["0x50"]="ENV_LOGGER_HOOK_DETECTED",
+}
+local function __is_executor()
+    local ok, exec = pcall(function() return identifyexecutor and identifyexecutor() end)
+    if ok and exec and exec ~= "Unknown" then return true end
+    if type(getgenv) == "function" or type(getgenv) == "table" then return true end
     if type(getfenv) == "function" then
-        local ok, fenv = pcall(getfenv)
-        if ok and type(fenv) ~= "table" then offset = offset + 1 end
+        local ok2, env = pcall(getfenv)
+        if ok2 and env and (env.script or env.loadstring) then return true end
     end
-    if type(debug) == "table" then
-        if type(debug.getinfo) == "function" then
-            local ok, info = pcall(debug.getinfo, 1)
-            if ok and info and (info.what == "C" or info.source == "=[C]") then offset = offset + 1 end
+    if type(syn) == "table" or type(fluxus) == "table" or type(secure_call) == "function" then return true end
+    return false
+end
+local function __at_isHooked(fn)
+    if type(fn) ~= "function" then return false end
+    if type(isfunctionhooked) ~= "function" then return false end
+    local ok, v = pcall(isfunctionhooked, fn)
+    return ok and v == true
+end
+local function __at_checkCritical()
+    if __is_executor() then return nil end 
+    if type(isfunctionhooked) ~= "function" then return nil end
+    local count = 0
+    if __at_isHooked(pcall) then count = count + 1 end
+    if __at_isHooked(rawget) then count = count + 1 end
+    if __at_isHooked(rawset) then count = count + 1 end
+    if __at_isHooked(setmetatable) then count = count + 1 end
+    if count >= 2 then return "0x07" end
+    return nil
+end
+local function __at_checkEnvLogger()
+    local tampered = false
+    pcall(function()
+        local p = game and game.Players and game.Players.LocalPlayer
+        if not p then return end
+        if math.floor(1.5) ~= 1 or math.ceil(1.5) ~= 2 then tampered = true end
+        if string.len("abc") ~= 3 then tampered = true end
+        if type(tostring) ~= "function" then tampered = true end
+    end)
+    if tampered then return "0x50" end
+    return nil
+end
+local function __at_run()
+    local ok, code = pcall(__at_checkCritical)
+    if ok and code then return code, __R[code] or "TAMPER" end
+    ok, code = pcall(__at_checkEnvLogger)
+    if ok and code then return code, __R[code] or "TAMPER" end
+    return nil, nil
+end
+__at_code, __at_text = __at_run()
+if __at_code then
+    local msg = "detect body go away"
+    pcall(function() if type(warn) == "function" then warn(msg) end end)
+    pcall(function() if type(print) == "function" then print(msg) end end)
+    pcall(function()
+        if type(game) == "userdata" or type(game) == "table" then
+            local ok, LS = pcall(function() return game:GetService("LogService") end)
+            if ok and LS and LS.LogMessage then
+                pcall(function() LS:LogMessage(3, msg) end)
+            end
         end
-        if type(debug.gethook) == "function" then
-            local ok, hook = pcall(debug.gethook)
-            if ok and hook ~= nil then offset = offset + 1 end
-        end
+    end)
+    while true do
+        local ok = pcall(function()
+            if type(task) == "table" and type(task.wait) == "function" then
+                task.wait(0.1)
+            elseif type(wait) == "function" then
+                wait(0.1)
+            else
+                return false
+            end
+            return true
+        end)
+        if not ok then break end
     end
-    local hooked = env["isfunctionhooked"] or env["is_function_hooked"]
-    if type(hooked) == "function" then
-        local check_fns = {pcall, type, tostring, next, pairs, ipairs, rawget, rawset, setmetatable}
-        for _, fn in ipairs(check_fns) do
-            local ok, res = pcall(hooked, fn)
-            if ok and res == true then offset = offset + 1 end
-        end
-    end
-    return offset
 end
 '''
+
+def format_lua_output(code, max_line=120):
+    out, buf, i, n = [], [], 0, len(code)
+    line_len = 0
+    st = 'normal'; lstr_close = None; lcom_close = None
+    def flush():
+        nonlocal buf, line_len
+        if buf:
+            line = ''.join(buf).rstrip()
+            if line: out.append(line)
+            buf = []; line_len = 0
+    while i < n:
+        c = code[i]
+        if st == 'dq':
+            buf.append(c); line_len += 1
+            if c == '\\' and i + 1 < n: buf.append(code[i+1]); line_len += 1; i += 2; continue
+            if c == '"': st = 'normal'
+            i += 1; continue
+        if st == 'sq':
+            buf.append(c); line_len += 1
+            if c == '\\' and i + 1 < n: buf.append(code[i+1]); line_len += 1; i += 2; continue
+            if c == "'": st = 'normal'
+            i += 1; continue
+        if st == 'lstr':
+            if code.startswith(lstr_close, i):
+                buf.append(lstr_close); line_len += len(lstr_close); i += len(lstr_close); st = 'normal'; continue
+            buf.append(c); line_len += 1
+            if c == '\n': flush()
+            i += 1; continue
+        if st == 'lcom':
+            if code.startswith(lcom_close, i):
+                buf.append(lcom_close); line_len += len(lcom_close); i += len(lcom_close); st = 'normal'; continue
+            buf.append(c); line_len += 1
+            if c == '\n': flush()
+            i += 1; continue
+        if st == 'com':
+            buf.append(c); line_len += 1
+            if c == '\n': flush(); st = 'normal'
+            i += 1; continue
+        if code.startswith('--', i):
+            m = re.match(r'--\[(=*)\[', code[i:])
+            if m:
+                eq = m.group(1); lcom_close = ']' + eq + ']'
+                tok = code[i:i+3+len(eq)]; buf.append(tok); line_len += len(tok); i += len(tok); st = 'lcom'; continue
+            buf.append('--'); line_len += 2; i += 2; st = 'com'; continue
+        if c == '[':
+            m = re.match(r'\[(=*)\[', code[i:])
+            if m:
+                eq = m.group(1); lstr_close = ']' + eq + ']'
+                tok = code[i:i+2+len(eq)]; buf.append(tok); line_len += len(tok); i += len(tok); st = 'lstr'; continue
+        if c == '"': st = 'dq'; buf.append(c); line_len += 1; i += 1; continue
+        if c == "'": st = 'sq'; buf.append(c); line_len += 1; i += 1; continue
+        buf.append(c); line_len += 1
+        if c == '\n': flush(); i += 1; continue
+        if line_len >= max_line:
+            if c in ';,}': flush(); i += 1; continue
+            if c == ' ': flush(); i += 1; continue
+            s = ''.join(buf)
+            idx = -1
+            for k in range(len(s)-1, -1, -1):
+                if s[k] in ' ,;': idx = k; break
+            if idx > 0 and idx > len(s) * 0.5:
+                out.append(s[:idx].rstrip()); buf = [s[idx:].lstrip()]; line_len = len(buf[0]); i += 1; continue
+        i += 1
+    flush()
+    return '\n'.join(out)
 
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 
 def randomName() -> str:
-    return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 9999))
-
-def generate_opaque_var(var_name):
-    val = random.randint(2, 50)
-    r = random.randint(1, 100)
-    op = random.choice(['bxor', 'band', 'bor'])
-    if op == 'bxor': expr = f"bit32.bxor({r}, {r}) + {val}"
-    elif op == 'band': expr = f"bit32.band({r}, {r}) + {val}"
-    else: expr = f"bit32.bor({r}, {r}) - {r} + {val}"
-    return f"local {var_name} = {expr} ", val
-
-def generate_opaque_predicate() -> str:
-    r = random.randint(1, 100)
-    return f"(bit32.bxor({r}, {r}) == 0)"
+    return "_" + "".join(random.choice(_BASE36) for _ in range(6)) + str(random.randint(0, 999))
 
 def generateSingleJunkLine() -> str:
     r = random.random()
-    pred = generate_opaque_predicate()
-    v = randomName()
-    if r < 0.2: return f"if {pred} then local {v}={random.randint(0, 998)} end "
-    elif r < 0.4: return f"local {v}={{}} for i=1,5 do {v}[i]=string.rep('x',10) end "
-    elif r < 0.6: return f"do local {v} = setmetatable({{}}, {{__index=function() return math.random() end}}) end "
-    elif r < 0.8: return f"pcall(function() if {pred} then return string.len('random') end end) "
-    else: return f"local {v}=math.floor(math.random(1, 500)) "
+    if r < 0.2: return f"local {randomName()}={random.randint(0, 998)} "
+    elif r < 0.35: return f"local {randomName()}=\"{random.randint(0, 254)}\" "
+    elif r < 0.5: return f"if not(1==1) then local x=1 end "
+    elif r < 0.7: return f'if type(nil)=="number" then while true do local {randomName()}=1 end end '
+    elif r < 0.85: 
+        v = randomName()
+        return f'do local {v}={{}} {v}["_"]=1 {v}=nil end '
+    else: return 'if type(math.pi)=="string" then while true do end end '
 
-def tokenize_lua(code: str):
-    tokens = []
-    i, n = 0, len(code)
-    while i < n:
-        c = code[i]
-        if c in '"\'':
-            quote = c; j = i + 1
-            while j < n and code[j] != quote:
-                if code[j] == '\\': j += 1
-                j += 1
-            tokens.append(code[i:j+1]); i = j + 1
-        elif c == '[':
-            m = re.match(r'\[(=*)\[', code[i:])
-            if m:
-                eq = m.group(1); close = ']' + eq + ']'
-                j = code.find(close, i)
-                if j != -1: tokens.append(code[i:j+len(close)]); i = j + len(close); continue
-            tokens.append(c); i += 1
-        elif c.isspace(): i += 1
-        elif c.isalnum() or c == '_':
-            j = i
-            while j < n and (code[j].isalnum() or code[j] == '_'): j += 1
-            tokens.append(code[i:j]); i = j
-        else:
-            tokens.append(c); i += 1
-    return tokens
-
-def minify_payload(code):
-    code = re.sub(r'--\[\[.*?\]\]', '', code, flags=re.DOTALL)
-    code = re.sub(r'--[^\n]*', '', code)
-    tokens = tokenize_lua(code)
-    out = []
-    for idx, tok in enumerate(tokens):
-        out.append(tok)
-        if idx < len(tokens) - 1:
-            nxt = tokens[idx+1]
-            if (tok[-1].isalnum() or tok[-1] == '_') and (nxt[0].isalnum() or nxt[0] == '_'): out.append(' ')
-    return ''.join(out)
-
-class BytecodeCompiler:
-    def __init__(self):
-        self.ops = []
-        self.const_pool = [None]
-        self.const_map = {}
-        self.next_reg = 0
-        self.locals = {}
-    
-    def add_const(self, val):
-        if isinstance(val, bool): key = ('bool', val)
-        elif isinstance(val, int): key = ('int', val)
-        elif isinstance(val, float): key = ('float', val)
-        elif isinstance(val, str): key = ('str', val)
-        else: key = ('nil', None)
-        
-        if key in self.const_map: return self.const_map[key]
-        idx = len(self.const_pool)
-        self.const_pool.append(val)
-        self.const_map[key] = idx
-        return idx
-    
-    def new_reg(self):
-        r = self.next_reg
-        self.next_reg += 1
-        return r
-    
-    def emit(self, op, a, b):
-        self.ops.append((op & 0xFFFFFFFF, a & 0xFFFFFFFF, b & 0xFFFFFFFF))
-    
-    def _unescape(self, s):
-        out = []
-        i = 0
-        while i < len(s):
-            if s[i] == '\\' and i + 1 < len(s):
-                c = s[i+1]
-                if c == 'n': out.append('\n')
-                elif c == 't': out.append('\t')
-                elif c == 'r': out.append('\r')
-                elif c == '\\': out.append('\\')
-                elif c == '"': out.append('"')
-                elif c == "'": out.append("'")
-                else: out.append(c)
-                i += 2
-            else:
-                out.append(s[i])
-                i += 1
-        return ''.join(out)
-    
-    def compile_expr(self, tokens, pos):
-        tok = tokens[pos] if pos < len(tokens) else None
-        if tok is None: return 0, pos
-        
-        if tok.startswith('"') or tok.startswith("'"):
-            val = self._unescape(tok[1:-1])
-            r = self.new_reg()
-            self.emit(1, r, self.add_const(val))
-            return r, pos + 1
-        
-        if re.match(r'^-?\d+(\.\d+)?$', tok):
-            val = float(tok) if '.' in tok else int(tok)
-            r = self.new_reg()
-            self.emit(1, r, self.add_const(val))
-            return r, pos + 1
-            
-        if tok == 'true':
-            r = self.new_reg(); self.emit(1, r, self.add_const(True)); return r, pos + 1
-        if tok == 'false':
-            r = self.new_reg(); self.emit(1, r, self.add_const(False)); return r, pos + 1
-        if tok == 'nil':
-            r = self.new_reg(); self.emit(1, r, self.add_const(None)); return r, pos + 1
-        
-        if tok[0].isalpha() or tok[0] == '_':
-            if tok in self.locals:
-                r = self.new_reg()
-                self.emit(10, r, self.locals[tok])
-            else:
-                r = self.new_reg()
-                self.emit(2, r, self.add_const(tok))
-            pos += 1
-            
-            while pos < len(tokens):
-                t = tokens[pos]
-                if t == '.':
-                    pos += 1
-                    if pos < len(tokens):
-                        field = tokens[pos]; pos += 1
-                        self.emit(3, r, self.add_const(field))
-                elif t == ':':
-                    pos += 1
-                    if pos < len(tokens):
-                        method = tokens[pos]; pos += 1
-                        self.emit(3, r, self.add_const(method))
-                        if pos < len(tokens) and tokens[pos] == '(':
-                            pos += 1
-                            arg_regs = [r]
-                            while pos < len(tokens) and tokens[pos] != ')':
-                                ar, pos = self.compile_expr(tokens, pos)
-                                arg_regs.append(ar)
-                                if pos < len(tokens) and tokens[pos] == ',': pos += 1
-                            if pos < len(tokens) and tokens[pos] == ')': pos += 1
-                            
-                            for i, ar in enumerate(arg_regs):
-                                target = r + 1 + i
-                                if ar != target: self.emit(10, target, ar)
-                            self.emit(4, r, len(arg_regs))
-                elif t == '(':
-                    pos += 1
-                    arg_regs = []
-                    while pos < len(tokens) and tokens[pos] != ')':
-                        ar, pos = self.compile_expr(tokens, pos)
-                        arg_regs.append(ar)
-                        if pos < len(tokens) and tokens[pos] == ',': pos += 1
-                    if pos < len(tokens) and tokens[pos] == ')': pos += 1
-                    
-                    for i, ar in enumerate(arg_regs):
-                        target = r + 1 + i
-                        if ar != target: self.emit(10, target, ar)
-                    self.emit(4, r, len(arg_regs))
-                else:
-                    break
-            return r, pos
-            
-        return 0, pos + 1
-    
-    def compile_statements(self, tokens):
-        pos = 0
-        n = len(tokens)
-        while pos < n:
-            tok = tokens[pos]
-            if tok == 'local':
-                pos += 1
-                if pos < n:
-                    name = tokens[pos]; pos += 1
-                    x_reg = self.new_reg()
-                    self.locals[name] = x_reg
-                    if pos < n and tokens[pos] == '=':
-                        pos += 1
-                        val_reg, pos = self.compile_expr(tokens, pos)
-                        if val_reg != x_reg: self.emit(10, x_reg, val_reg)
-            elif tok == 'return':
-                pos += 1
-                if pos < n and tokens[pos] not in ('end', ';'):
-                    r, pos = self.compile_expr(tokens, pos)
-                    self.emit(6, r, 0)
-                else: self.emit(6, 0, 0)
-            elif tok[0].isalpha() or tok[0] == '_':
-                if pos + 1 < n and tokens[pos+1] == '=':
-                    name = tok; pos += 2
-                    val_reg, pos = self.compile_expr(tokens, pos)
-                    if name in self.locals: self.emit(10, self.locals[name], val_reg)
-                    else: self.emit(7, self.add_const(name), val_reg)
-                else:
-                    r, pos = self.compile_expr(tokens, pos)
-            else:
-                pos += 1
-        
-        self.emit(6, 0, 0)
-        return self.ops, self.const_pool
-
-def compile_to_bytecode(code):
-    tokens = tokenize_lua(code)
-    compiler = BytecodeCompiler()
-    return compiler.compile_statements(tokens)
-
-def generate_bytecode(ops, const_pool, seed):
-    encoded_ops = []
-    acc = seed
-    for pc, (op, a, b) in enumerate(ops, start=1):
-        enc_op = op ^ ((acc + pc) & 0xFFFFFFFF)
-        enc_a = a ^ (acc & 0xFFFFFFFF)
-        enc_b = b ^ ((pc * 7) & 0xFFFFFFFF)
-        acc = ((acc * 31 + op + pc) % 256 + 256) % 256
-        encoded_ops.append(f"{{{enc_op},{enc_a},{enc_b}}}")
-    
-    def repr_val(v):
-        if v is None: return "nil"
-        if isinstance(v, bool): return "true" if v else "false"
-        if isinstance(v, str):
-            esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-            return f'"{esc}"'
-        return str(v)
-    
-    # Constantes normales (sin XOR de bytes)
-    cp_str = "{" + ",".join(repr_val(c) for c in const_pool[1:]) + "}"
-    return "{" + ",".join(encoded_ops) + "}", cp_str
-
-# ── POLIMORFISMO (CAPAS) ──────────────────────────────────────────────────
-def build_vm_table_style(inner_code, config):
-    store = randomName(); mt = randomName(); dispatch = randomName()
-    op_vars = []; out = ""
-    for _ in range(config["opaque_vars"]):
-        ov = randomName(); code, val = generate_opaque_var(ov); out += code; op_vars.append((ov, val))
-    out += f"local {store}={{}} local {mt}={{__index=function(t,k) return {store}[k] end}} "
-    out += f"local {dispatch}=setmetatable({{}},{mt}) "
-    handler_count = random.randint(4, 7); real_idx = random.randint(1, handler_count)
-    for i in range(1, handler_count + 1):
-        if i == real_idx: out += f"{store}[{i}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {inner_code} end "
-        else: out += f"{store}[{i}]=function(lM) {generateSingleJunkLine()} return nil end "
-    conds = [f"{ov} {random.choice(['==', '>=', '<='])} {val}" for ov, val in op_vars]
-    cond_str = " and ".join(conds) if conds else "true"
-    out += f"local _state=1 while _state > 0 do "
-    out += f"if _state==1 and {cond_str} then {dispatch}[{real_idx}]({{}}) _state=0 end "
-    out += "end "
-    return out
-
-def build_vm_ifchain_style(inner_code, config):
-    out = ""; state_var = randomName()
-    branches = [random.randint(100, 999) for _ in range(random.randint(3, 5))]
-    real_branch = random.choice(branches); initial_state = real_branch
-    op_vars = []
-    for _ in range(config["opaque_vars"]):
-        ov = randomName(); code, val = generate_opaque_var(ov); out += code; op_vars.append((ov, val))
-    out += f"local {state_var} = {initial_state} while {state_var} ~= 0 do "
-    conds = [f"{ov} {random.choice(['==', '>=', '<='])} {val}" for ov, val in op_vars]
-    cond_str = " and ".join(conds) if conds else "true"
-    for i, b in enumerate(branches):
+def applyCFF(blocks) -> str:
+    stateVar = randomName()
+    n = len(blocks)
+    states = random.sample(range(1000, 99999), n + 1)
+    lua = f"local {stateVar}={states[0]} while true do "
+    for i, block in enumerate(blocks):
         prefix = "if" if i == 0 else "elseif"
-        if b == real_branch: out += f"{prefix} {state_var} == {b} and {cond_str} then {generateSingleJunkLine()} {inner_code} {state_var} = 0 "
-        else: out += f"{prefix} {state_var} == {b} then {state_var} = {random.randint(0, 1)} "
-    out += "else break end end "
-    return out
+        lua += f"{prefix} {stateVar}=={states[i]} then {block} {stateVar}={states[i+1]} "
+    lua += f"elseif {stateVar}=={states[n]} then break end end "
+    return lua
 
-def build_vm_cff_style(inner_code, config):
-    var_s = randomName(); s1 = random.randint(1000, 1999); s2 = random.randint(2000, 2999); s3 = random.randint(3000, 3999)
-    out = f"local {var_s} = {s1} "
-    op_vars = []
-    for _ in range(config["opaque_vars"]):
-        ov = randomName(); code, val = generate_opaque_var(ov); out += code; op_vars.append((ov, val))
-    conds = [f"{ov} {random.choice(['==', '>=', '<='])} {val}" for ov, val in op_vars]
-    cond_str = " and ".join(conds) if conds else "true"
-    out += f"repeat "
-    out += f"if {var_s} == {s1} and {cond_str} then {generateSingleJunkLine()} {inner_code} {var_s} = {s2} "
-    out += f"elseif {var_s} == {s2} then {var_s} = {s3} "
-    out += f"else {var_s} = {s3} end "
-    out += f"until {var_s} == {s3} "
-    return out
+def runtimeString(s: str) -> str:
+    return '"' + "".join(f"\\{ord(c):03d}" for c in s) + '"'
 
-def build_polymorphic_layer(inner_code, config):
-    mode = config["polymorphic_mode"]
-    if mode == "auto" or mode == "mixed": mode = random.choice(["table", "ifchain", "cff"])
-    if mode == "table": return build_vm_table_style(inner_code, config)
-    elif mode == "ifchain": return build_vm_ifchain_style(inner_code, config)
-    else: return build_vm_cff_style(inner_code, config)
-
-# ── NÚCLEO DE LA VM ───────────────────────────────────────────────────────
-def buildTrueVM(payloadStr: str, config) -> str:
-    seed = random.randint(10, 250)
-    raw_ops, const_pool = compile_to_bytecode(payloadStr)
-    encoded_ops_str, const_pool_str = generate_bytecode(raw_ops, const_pool, seed)
+# ── VM SIN XOR Y SIN BYTES ────────────────────────────────────────────────
+def buildTrueVM(payloadStr: str) -> str:
+    STACK, POOL, ORDER = randomName(), randomName(), randomName()
+    vmCore = f"local {POOL}={{}} "
     
-    vmCore = f"{ANTI_TAMPER_CORE}\n"
-    vmCore += f"local _offset = _get_integrity_offset() "
-    vmCore += f"local _seed = {seed} + _offset "
-    vmCore += f"local _consts = {const_pool_str} "
-    vmCore += f"local _ops = {encoded_ops_str} "
+    chunkSize = 30
+    realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
+    realOrder = []
+    totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
+    if totalChunks < len(realChunks): totalChunks = len(realChunks)
+    currentReal = 0
     
-    vmCore += "local pc = 1 local acc = _seed local regs = {} local running = true "
-    vmCore += "local env = (getgenv and type(getgenv)=='function') and getgenv() or _G "
-    vmCore += "local unpack_fn = table.unpack or unpack "
+    for i in range(1, totalChunks + 1):
+        if currentReal < len(realChunks) and (random.random() > 0.4 or (totalChunks - i) == (len(realChunks) - currentReal)):
+            realOrder.append(i)
+            chunk = realChunks[currentReal]
+            # En lugar de XOR o Bytes, usamos strings escapados
+            vmCore += f"{POOL}[{i}]={runtimeString(chunk)} "
+            currentReal += 1
+        else:
+            fake_str = "".join(random.choice("abcdefghijklmnopqrstuvwxyz") for _ in range(random.randint(5, 15)))
+            vmCore += f"{POOL}[{i}]={runtimeString(fake_str)} "
+            
+    vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
+    idxVar = randomName()
     
-    vmCore += "while running and pc <= #_ops do "
-    vmCore += "local raw = _ops[pc] "
-    vmCore += "local op = bit32.bxor(raw[1], bit32.band(acc + pc, 0xFFFFFFFF)) "
-    vmCore += "local a = bit32.bxor(raw[2] or 0, bit32.band(acc, 0xFFFFFFFF)) "
-    vmCore += "local b = bit32.bxor(raw[3] or 0, bit32.band(pc * 7, 0xFFFFFFFF)) "
-    vmCore += "acc = ((acc * 31 + op + pc) % 256 + 256) % 256 "
-    vmCore += "pc = pc + 1 "
-    
-    vmCore += "if op == 1 then regs[a] = _consts[b] "
-    vmCore += "elseif op == 2 then regs[a] = env[_consts[b]] "
-    vmCore += "elseif op == 3 then regs[a] = regs[a][_consts[b]] "
-    vmCore += "elseif op == 4 then "
-    vmCore += "  local fn = regs[a] local args = {} "
-    vmCore += "  for i = 1, b do args[i] = regs[a + i] end "
-    vmCore += "  if type(fn) == 'function' then regs[a] = fn(unpack_fn(args)) end "
-    vmCore += "elseif op == 5 then pc = b "
-    vmCore += "elseif op == 6 then running = false "
-    vmCore += "elseif op == 7 then env[_consts[a]] = regs[b] "
-    vmCore += "elseif op == 8 then regs[a][_consts[b]] = regs[a+1] "
-    vmCore += "elseif op == 9 then if not regs[a] then pc = b end "
-    vmCore += "elseif op == 10 then regs[a] = regs[b] "
-    vmCore += "end end "
-    
+    vmCore += f"local {STACK}={{}} for _, {idxVar} in ipairs({ORDER}) do table.insert({STACK}, {POOL}[{idxVar}]) end "
+    vmCore += f"local _e = table.concat({STACK}) "
+    vmCore += "local _g = (getgenv and type(getgenv)=='function') and getgenv() or {} "
+    vmCore += "local _ls = loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
+    vmCore += "local _as = assert or _g.assert or (getfenv and getfenv().assert) "
+    vmCore += "if type(_ls) ~= 'function' then _ls = function(s) return function() end end end "
+    vmCore += "local _ok, _res = pcall(_as, _ls(_e, \"=\")) "
+    vmCore += "if not _ok then warn('Moonslot VM Error: '..tostring(_res)) else _res() end "
     return vmCore
 
-# ── ORQUESTADOR PRINCIPAL ─────────────────────────────────────────────────
-def obfuscate(sourceCode: str, config: dict) -> str:
-    if not sourceCode: return '--ERROR'
-    random.seed(config["seed"])
+def buildSingleVM(innerCode: str, handlerCount: int) -> str:
+    DISPATCH = randomName()
+    out = f"local {DISPATCH}={{}} "
+    realIdx = random.randint(0, handlerCount - 1)
+    for i in range(handlerCount):
+        if i == realIdx:
+            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
+        else:
+            out += f"{DISPATCH}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
+    execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
+    out += applyCFF(execBlocks)
+    return out
 
-    # 1. Código del usuario
-    minified_user_code = minify_payload(sourceCode)
-    final_user_script = buildTrueVM(minified_user_code, config)
+# ── 30 CAPAS PARA TODO ────────────────────────────────────────────────────
+def build30xVM(payloadStr: str) -> str:
+    vm = buildTrueVM(payloadStr)
+    for _ in range(30):
+        vm = buildSingleVM(vm, random.randint(3, 4))
+    return vm
+
+def getExtraProtections() -> str:
+    return """
+pcall(function()
+    if math.pi < 3.14 or math.pi > 3.15 then error("math corrupted") end
+    if type(tostring) ~= "function" then error("tostring missing") end
+    if type(pcall) ~= "function" then error("pcall missing") end
+    if string.len("a") ~= 1 then error("string.len broken") end
+    if math.floor(-1/10) ~= -1 then error("math.floor broken") end
+end)
+"""
+
+def obfuscate(sourceCode: str, seed: int = 0) -> str:
+    if not sourceCode:
+        return '--ERROR'
+    random.seed(seed)
+    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
+    extraProts = getExtraProtections()
+    protection_payload = (
+        "local __run_at = function()\n"
+        + ANTI_TAMPER_CORE.strip() + "\n"
+        + "end\n"
+        + "pcall(__run_at)\n"
+        + antiDebug + "\n"
+        + extraProts
+    )
     
-    # 30 capas de VM para el usuario
-    for _ in range(config["vm_layers"]):
-        final_user_script = build_polymorphic_layer(final_user_script, config)
-        
-    final_user_script = f"(function() pcall(function() {final_user_script} end) end)()"
-
-    # 2. Anti-Tamper con las mismas capas
-    protection_payload = minify_payload("pcall(function() if type(_G) ~= 'table' then error('g') end end)")
-    anti_tamper_final = buildTrueVM(protection_payload, config)
+    # Ambos usan 30 capas
+    final_protection = build30xVM(protection_payload)
     
-    # 30 capas de VM para el anti-tamper
-    for _ in range(config["anti_tamper_layers"]):
-        anti_tamper_final = build_polymorphic_layer(anti_tamper_final, config)
-
+    isLoadstringRegex = re.compile(
+        r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
+        re.IGNORECASE)
+    match = isLoadstringRegex.search(sourceCode)
+    payloadToProtect = match.group(1) if match else sourceCode
+    
+    # Ambos usan 30 capas
+    final_user_script = build30xVM(payloadToProtect)
+    
     final_code = (
-        f"local _mc={{}} for i=1,1500 do _mc[i]=string.rep('X',50) end _mc=nil pcall(collectgarbage) "
-        f"{anti_tamper_final} "
+        f"{HEADER}\n\n"
+        f"{final_protection}\n"
         f"{final_user_script}"
     )
-    return HEADER + minify_payload(final_code)
+    return format_lua_output(final_code, max_line=120)
 
 def main():
-    parser = argparse.ArgumentParser(description="Moonslot - Custom Bytecode VM")
-    parser.add_argument('input', help="Archivo de entrada Lua")
-    parser.add_argument('-o', '--output', default='obfuscated.lua', help="Archivo de salida")
-    parser.add_argument('--seed', type=int, default=0, help="Semilla")
-    
-    # 30 capas para todo por defecto
-    parser.add_argument('--vm-layers', type=int, default=30, help="Capas de VM para el script del usuario (default: 30)")
-    parser.add_argument('--anti-tamper-layers', type=int, default=30, help="Capas de VM para el Anti-Tamper (default: 30)")
-    
-    parser.add_argument('--opaque-vars', type=int, default=2, help="Variables opacas por capa")
-    parser.add_argument('--polymorphic-mode', choices=['auto', 'table', 'ifchain', 'cff', 'mixed'], default='auto', help="Estilo de despacho")
+    ap = argparse.ArgumentParser()
+    ap.add_argument('input')
+    ap.add_argument('-o', '--output', default='obfuscated.lua')
+    ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--min-size', type=int, default=23000)
+    args = ap.parse_args()
+    with open(args.input, encoding='utf-8') as f:
+        src = f.read()
+    out = obfuscate(src, seed=args.seed)
+    with open(args.output, 'w', encoding='utf-8') as f:
+        f.write(out)
 
-    args, unknown = parser.parse_known_args()
-    config = {
-        "seed": args.seed, "vm_layers": args.vm_layers,
-        "anti_tamper_layers": args.anti_tamper_layers,
-        "opaque_vars": args.opaque_vars, "polymorphic_mode": args.polymorphic_mode
-    }
-
-    try:
-        with open(args.input, encoding='utf-8') as f: src = f.read()
-        out = obfuscate(src, config)
-        with open(args.output, 'w', encoding='utf-8') as f: f.write(out)
-        print(f"[+] Obfuscation complete. Output saved to {args.output}")
-    except Exception as e: print(f"[-] Error: {e}")
-
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    main()
