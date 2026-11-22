@@ -8,23 +8,23 @@ HEADER = '''--[[
   Unauthorized reproduction or distribution is prohibited.
 ]]\n'''
 
-ANCHOR_SYMBOLS = list("@#€_&-+()/*\"':;!?")
+ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
     return f"[pool.a.d.d._{suffix}]"
 
 def lua_quote(s: str) -> str:
-    escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'
 
 BOOTSTRAP_HELPERS = (
     "local _T=type "
     "local _bx=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
     "local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
-    "local _ch=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return ''end "
+    "local _ch=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return''end "
     "local _rp=(type(string)=='table'and type(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..s end return o end "
-    "local _tc=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or ''end "
+    "local _tc=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or''end "
     "local _ti=(type(table)=='table'and type(table.insert)=='function')and table.insert or function(t,v)t[#t+1]=v end "
     "local _fl=(type(math)=='table'and type(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
     "local _rn=(type(math)=='table'and type(math.random)=='function')and math.random or function(a,b)return a or 0 end "
@@ -296,7 +296,7 @@ def obfuscate_identifiers(code: str) -> str:
         'clonefunction', 'hookfunction', 'collectgarbage', '_G', '_RT', '_tampered', 'Spy',
         '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
     }
-    local_vars = set(re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code))
+    local_vars = set(re.findall(r'\blocal\s+(?:function\s+)?([a-zA-Z_][a-zA-Z0-9_]*)', code))
     for var in local_vars:
         if var not in keywords and len(var) > 1:
             new_var = randomName()
@@ -332,7 +332,7 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
         return f"do local {v}=_tc({{{pieces_table}}})if {generate_opaque_predicate()}then {pool}[{idx}]={v} end end {tag_guard}"
     else:
         v1 = randomName()
-        return f"local {v1}={{{pieces_table}}} {pool}[{idx}]=_tc({v1}) {tag_guard}"
+        return f"local {v1}={{{pieces_table}}} {pool}[{idx}]={v1} {tag_guard}"
 
 def buildTrueVM(payloadStr: str, pool_tags) -> str:
     STACK, KEY1, KEY2, ORDER, POOL, B_TABLE = (
@@ -525,7 +525,8 @@ def minify_payload(code):
             j = i + 1
             while j < n and code[j] != quote:
                 if code[j] == '\\':
-                    j += 1
+                    j += 2
+                    continue
                 j += 1
             tokens.append(code[i:j+1])
             i = j + 1
