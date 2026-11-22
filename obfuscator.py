@@ -18,6 +18,20 @@ def lua_quote(s: str) -> str:
     escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
     return f'"{escaped}"'
 
+BOOTSTRAP_HELPERS = (
+    "local _T=type "
+    "local _bx=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
+    "local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
+    "local _ch=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return ''end "
+    "local _rp=(type(string)=='table'and type(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..s end return o end "
+    "local _tc=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or ''end "
+    "local _ti=(type(table)=='table'and type(table.insert)=='function')and table.insert or function(t,v)t[#t+1]=v end "
+    "local _fl=(type(math)=='table'and type(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
+    "local _rn=(type(math)=='table'and type(math.random)=='function')and math.random or function(a,b)return a or 0 end "
+    "local _er=type(error)=='function'and error or function()end "
+    "local _RT=(getgenv and _T(getgenv)=='function')and getgenv()or _G "
+)
+
 ANTI_TAMPER_CORE = r'''
 local _s = function(...) return table.concat({...}) end
 local _tampered = false
@@ -253,7 +267,7 @@ def randomName() -> str:
 
 def generate_opaque_predicate() -> str:
     r = random.randint(1, 99)
-    return f"(bit32.bxor({r},{r})==0)"
+    return f"(_bx({r},{r})==0)"
 
 def generateSingleJunkLine(pool_tags=None) -> str:
     pred = generate_opaque_predicate()
@@ -261,13 +275,13 @@ def generateSingleJunkLine(pool_tags=None) -> str:
     pool_snippet = ""
     if pool_tags:
         tag = random.choice(pool_tags)
-        pool_snippet = f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true error('Moonslot detect you',0)end "
+        pool_snippet = f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true _er('Moonslot detect you',0)end "
     variants = [
         f"if {pred} then {pool_snippet}local {v}={random.randint(0,998)} end ",
-        f"local {v}={{}}for i=1,8 do {v}[i]=string.rep('x',2)end {pool_snippet}",
-        f"do local {v}=setmetatable({{}},{{__index=function()return math.random()end,__metatable='locked'}})end {pool_snippet}",
-        f"if type(pcall)=='function'then pcall(function()if {pred} then return #('random')end end)end {pool_snippet}",
-        f"local {v}=math.floor(math.random({random.randint(1,50)},500)){pool_snippet}",
+        f"local {v}={{}}for i=1,8 do {v}[i]=_rp('x',2)end {pool_snippet}",
+        f"do local {v}=setmetatable({{}},{{__index=function()return _rn()end,__metatable='locked'}})end {pool_snippet}",
+        f"if _T(pcall)=='function'then pcall(function()if {pred} then return #('random')end end)end {pool_snippet}",
+        f"local {v}=_fl(_rn({random.randint(1,50)},500)){pool_snippet}",
     ]
     return random.choice(variants)
 
@@ -279,7 +293,8 @@ def obfuscate_identifiers(code: str) -> str:
         'game', 'task', 'loadstring', 'getfenv', 'getgenv', 'setfenv', 'debug',
         'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
         'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
-        'clonefunction', 'hookfunction', 'collectgarbage', '_G', '_RT', '_tampered', 'Spy'
+        'clonefunction', 'hookfunction', 'collectgarbage', '_G', '_RT', '_tampered', 'Spy',
+        '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
     }
     local_vars = set(re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code))
     for var in local_vars:
@@ -307,17 +322,17 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
     tag_guard = ""
     if pool_tags and random.random() < 0.25:
         t = lua_quote(random.choice(pool_tags))
-        tag_guard = f"if _RT and _RT[{t}]==nil then error('Moonslot detect you',0)end "
+        tag_guard = f"if _RT and _RT[{t}]==nil then _er('Moonslot detect you',0)end "
 
     r = random.random()
     if r < 0.35:
-        return f"{tag_guard}{pool}[{idx}]=table.concat({{{pieces_table}}}) "
+        return f"{tag_guard}{pool}[{idx}]=_tc({{{pieces_table}}}) "
     elif r < 0.7:
         v = randomName()
-        return f"do local {v}=table.concat({{{pieces_table}}})if {generate_opaque_predicate()}then {pool}[{idx}]={v} end end {tag_guard}"
+        return f"do local {v}=_tc({{{pieces_table}}})if {generate_opaque_predicate()}then {pool}[{idx}]={v} end end {tag_guard}"
     else:
         v1 = randomName()
-        return f"local {v1}={{{pieces_table}}} {pool}[{idx}]=table.concat({v1}) {tag_guard}"
+        return f"local {v1}={{{pieces_table}}} {pool}[{idx}]=_tc({v1}) {tag_guard}"
 
 def buildTrueVM(payloadStr: str, pool_tags) -> str:
     STACK, KEY1, KEY2, ORDER, POOL, B_TABLE = (
@@ -331,31 +346,31 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     CORRUPT_FN = randomName()
     check_tag = lua_quote(random.choice(pool_tags))
 
-    vmCore = f"local _tampered=false local {POOL}={{}}local {B_TABLE}={{}}for i=0,255 do {B_TABLE}[i]=string.char(i)end "
+    vmCore = f"local _tampered=false local {POOL}={{}}local {B_TABLE}={{}}for i=0,255 do {B_TABLE}[i]=_ch(i)end "
     vmCore += f"local {STACK}={{}} local {KEY1}={seed1} local {KEY2}={seed2} "
 
     vmCore += (
         f"local function {CORRUPT_FN}() "
-        f"if _tampered or type(_RT)~='table' or _RT[{check_tag}]~=true then "
-        f"{KEY1}=({KEY1}+math.random(17,97))%256 {KEY2}=({KEY2}+math.random(13,89))%256 "
-        f"error('Moonslot detect you',0) "
+        f"if _tampered or _T(_RT)~='table' or _RT[{check_tag}]~=true then "
+        f"{KEY1}=({KEY1}+_fl(_rn(17,97)))%256 {KEY2}=({KEY2}+_fl(_rn(13,89)))%256 "
+        f"_er('Moonslot detect you',0) "
         f"end end {CORRUPT_FN}() "
     )
 
     ls_chars = ",".join(str(ord(c)) for c in "loadstring")
-    vmCore += f"local _ls_key=string.char({ls_chars}) "
+    vmCore += f"local _ls_key=_ch({ls_chars}) "
 
     vmCore += f"local {B64_TABLE}='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
     vmCore += f"local function {DECODE_FUNC}(data) local res={{}}local i=1 while i<=#data do "
     vmCore += f"local b1,b2,b3,b4=data:byte(i,i+3) "
-    vmCore += f"local c1,c2,c3,c4={B64_TABLE}:find(string.char(b1),1,true),{B64_TABLE}:find(string.char(b2),1,true),{B64_TABLE}:find(string.char(b3),1,true),{B64_TABLE}:find(string.char(b4),1,true) "
+    vmCore += f"local c1,c2,c3,c4={B64_TABLE}:find(_ch(b1),1,true),{B64_TABLE}:find(_ch(b2),1,true),{B64_TABLE}:find(_ch(b3),1,true),{B64_TABLE}:find(_ch(b4),1,true) "
     vmCore += f"c1,c2,c3,c4=c1-1,c2 and c2-1,c3 and c3-1,c4 and c4-1 "
-    vmCore += f"local byte1=math.floor(c1*4+(c2 or 0)/16) "
-    vmCore += f"local byte2=math.floor(((c2 or 0)%16)*16+(c3 or 0)/4) "
-    vmCore += f"local byte3=math.floor(((c3 or 0)%4)*64+(c4 or 0)) "
-    vmCore += f"table.insert(res,string.char(byte1)) "
-    vmCore += f"if c3 then table.insert(res,string.char(byte2))end if c4 then table.insert(res,string.char(byte3))end "
-    vmCore += f"i=i+4 end return table.concat(res)end "
+    vmCore += f"local byte1=_fl(c1*4+(c2 or 0)/16) "
+    vmCore += f"local byte2=_fl(((c2 or 0)%16)*16+(c3 or 0)/4) "
+    vmCore += f"local byte3=_fl(((c3 or 0)%4)*64+(c4 or 0)) "
+    vmCore += f"_ti(res,_ch(byte1)) "
+    vmCore += f"if c3 then _ti(res,_ch(byte2))end if c4 then _ti(res,_ch(byte3))end "
+    vmCore += f"i=i+4 end return _tc(res)end "
 
     chunkSize = 56
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
@@ -393,20 +408,20 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += f"local dec_chunk={DECODE_FUNC}({POOL}[{idxVar}]) "
     vmCore += f"for {jVar}=1,#dec_chunk do local b=dec_chunk:byte({jVar}) "
     vmCore += f"local rot=({KEY1}+_gIdx*{KEY2})%256 "
-    vmCore += f"local real_b=math.floor(bit32.bxor(b,rot))%256 "
-    vmCore += f"table.insert({STACK},{B_TABLE}[real_b])_gIdx=_gIdx+1 end end "
-    vmCore += f"local _e=table.concat({STACK}){STACK}=nil "
+    vmCore += f"local real_b=_fl(_bx(b,rot))%256 "
+    vmCore += f"_ti({STACK},{B_TABLE}[real_b])_gIdx=_gIdx+1 end end "
+    vmCore += f"local _e=_tc({STACK}){STACK}=nil "
 
-    vmCore += "local _g=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-    vmCore += "local _fenv=(getfenv and type(getfenv)=='function' and pcall(getfenv,0))and getfenv(0)or _G "
-    vmCore += "local _env=type(_g)=='table'and setmetatable({},{__index=_g})or _G "
-    vmCore += "local _rg=type(rawget)=='function'and rawget or function(t,k)return type(t)=='table'and t[k]or nil end "
-    vmCore += "local _ls=_rg(_g,_ls_key)or _rg(_fenv,_ls_key)or _rg(_G,_ls_key)or loadstring "
-    vmCore += "if type(_ls)=='function' and type(_e)=='string' and #_e>0 then "
-    vmCore += "local _ok,_res=type(pcall)=='function'and pcall(_ls,_e)or true,_ls(_e) "
-    vmCore += "if _ok and type(_res)=='function' then "
-    vmCore += "if type(setfenv)=='function' and type(pcall)=='function' then pcall(setfenv,_res,_env)end "
-    vmCore += "if type(pcall)=='function' then pcall(_res)else _res()end end end "
+    vmCore += "local _g=(getgenv and _T(getgenv)=='function')and getgenv()or _G "
+    vmCore += "local _fenv=(getfenv and _T(getfenv)=='function' and _T(pcall)=='function' and pcall(getfenv,0))and getfenv(0)or _G "
+    vmCore += "local _env=_T(_g)=='table'and setmetatable({},{__index=_g})or _G "
+    vmCore += "local _rg=_T(rawget)=='function'and rawget or function(t,k)return _T(t)=='table'and t[k]or nil end "
+    vmCore += "local _ls=_rg(_g,_lsk)or _rg(_fenv,_lsk)or _rg(_G,_lsk)or loadstring "
+    vmCore += "if _T(_ls)=='function' and _T(_e)=='string' and #_e>0 then "
+    vmCore += "local _ok,_res=_T(pcall)=='function'and pcall(_ls,_e)or true,_ls(_e) "
+    vmCore += "if _ok and _T(_res)=='function' then "
+    vmCore += "if _T(setfenv)=='function' and _T(pcall)=='function' then pcall(setfenv,_res,_env)end "
+    vmCore += "if _T(pcall)=='function' then pcall(_res)else _res()end end end "
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
@@ -453,8 +468,8 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
         tag_chk = ""
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
-            tag_chk = f"if type(_RT)~='table' or _RT[{t}]~=true then error('Moonslot detect you',0)end "
-        nested = f"(function()if type(pcall)=='function'then pcall(function(){tag_chk}{nested}end)else {tag_chk}{nested}end end)();"
+            tag_chk = f"if _T(_RT)~='table' or _RT[{t}]~=true then _er('Moonslot detect you',0)end "
+        nested = f"(function()if _T(pcall)=='function'then pcall(function(){tag_chk}{nested}end)else {tag_chk}{nested}end end)();"
     return nested
 
 def getExtraProtections(pool_tags) -> str:
@@ -485,11 +500,11 @@ def build22kBlock(pool_tags) -> str:
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         mode = random.randint(0, 3)
         if mode == 0:
-            item = f"if {generate_opaque_predicate()}then if _RT and _RT[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
+            item = f"if {generate_opaque_predicate()}then if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
         elif mode == 1:
-            item = f"local {v}='{sval}' if _RT and _RT[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]={v}"
+            item = f"local {v}='{sval}' if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end {tbl}[{k_idx}]={v}"
         elif mode == 2:
-            item = f"do local {v}={random.randint(1,999)} if _RT and _RT[{tag}]==nil then error('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
+            item = f"do local {v}={random.randint(1,999)} if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end {tbl}[{k_idx}]='{sval}' end"
         else:
             item = f"if {generate_opaque_predicate()}then {tbl}[{k_idx}]='{sval}' end"
         soup.append(item)
@@ -556,7 +571,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     pool_tags = [generate_pool_tag() for _ in range(pool_count)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
     reg_pools = " ".join(
-        f"if type(_RT)=='table'then _RT[{lua_quote(tag)}]=true end"
+        f"if _T(_RT)=='table'then _RT[{lua_quote(tag)}]=true end"
         for tag in pool_tags
     )
 
@@ -564,7 +579,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     obfuscated_user_code = obfuscate_identifiers(minified_user_code)
 
     at_core = ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua)
-    antiDebug = "local _t=os.clock()for _=1,120000 do end if os.clock()-_t>5.0 then while true do if task and type(task.wait)=='function'then task.wait(0.1)end end end "
+    antiDebug = "local _t=os.clock()for _=1,120000 do end if os.clock()-_t>5.0 then while true do if task and _T(task.wait)=='function'then task.wait(0.1)end end end "
     extraProts = getExtraProtections(pool_tags)
 
     final_user_script = buildMultiVM(obfuscated_user_code, pool_tags, layers=2)
@@ -577,9 +592,9 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
 
     final_code = (
-        f"local _RT=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-        f"local _mc={{}}for i=1,400 do _mc[i]=string.rep('X',24)end _mc=nil "
-        f"if type(collectgarbage)=='function'then if type(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
+        f"{BOOTSTRAP_HELPERS}"
+        f"local _mc={{}}for i=1,400 do _mc[i]=_rp('X',24)end _mc=nil "
+        f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
         f"{reg_pools} "
         f"{filler_22k}"
         f"{anti_tamper_final} "
