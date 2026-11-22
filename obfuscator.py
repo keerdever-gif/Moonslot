@@ -12,7 +12,7 @@ ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 
 def hidden_alert_call() -> str:
-    return f"_er(_ch({ALERT_BYTES}),0)"
+    return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
@@ -43,7 +43,7 @@ local _pool_list = __POOL_LIST_PLACEHOLDER__
 local _root = (getgenv and type(getgenv) == "function") and getgenv() or _G
 local _msg = (type(string) == "table" and type(string.char) == "function") and string.char(77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117) or "err"
 
-local function _safe_pcall(fn, ...)
+local function _safe_call(fn, ...)
     if type(fn) ~= "function" then
         return false, nil
     end
@@ -71,200 +71,81 @@ local function _check_pools()
     end
 end
 
-local function _check_spy_and_globals()
+local function _check_spy_and_loggers()
     if type(_root) == "table" then
         if type(rawget) == "function" and rawget(_root, "Spy") ~= nil then
             _dtc()
         end
         for k, v in pairs(_root) do
-            local ks = tostring(k)
-            if type(v) == "function" and (string.find(ks, "hook") or string.find(ks, "detour") or string.find(ks, "logger") or string.find(ks, "spy")) then
+            local ks = tostring(k):lower()
+            if type(v) == "function" and (ks:find("spy", 1, true) or ks:find("logger", 1, true) or ks:find("remotespy", 1, true) or ks:find("httplog", 1, true)) then
                 _dtc()
             end
         end
     end
-    _safe_pcall(function()
-        if (_G and _G.Spy ~= nil) or Spy ~= nil then
+    _safe_call(function()
+        if _G and type(rawget) == "function" and rawget(_G, "Spy") ~= nil then
             _dtc()
         end
     end)
 end
 
-local function _check_print_and_debug()
-    if type(tostring(print)) == "string" and tostring(print):match("^function: 0x0000") then
-        _dtc()
+local function _check_env_integrity()
+    if type(print) == "function" and type(tostring) == "function" then
+        local ps = tostring(print)
+        if type(ps) == "string" and ps:match("^function: 0x0000") then
+            _dtc()
+        end
     end
     if type(debug) == "table" and type(debug.gethook) == "function" then
-        local ok, hook = _safe_pcall(debug.gethook)
-        if ok and hook ~= nil then
+        local ok, hk = _safe_call(debug.gethook)
+        if ok and hk ~= nil then
             _dtc()
         end
     end
-    _safe_pcall(function()
-        if type(debug) == "table" and type(debug.getinfo) == "function" then
-            local info = debug.getinfo(function() end, "u")
-            if type(info) ~= "table" or info.nups == nil then
-                _dtc()
-            end
-        end
-    end)
-end
-
-local function _check_string_char_and_buffer()
-    local okChar, resChar = _safe_pcall(string.char, nil)
-    if okChar and resChar == "" then
-        _dtc()
-    end
-    if type(buffer) == "table" and type(buffer.fromstring) == "function" then
-        _safe_pcall(function()
-            local str = "moonslot_env_check"
-            local buf = buffer.fromstring(str)
-            local okSvc, svc = _safe_pcall(function() return game:GetService("EncodingService") end)
-            if okSvc and type(typeof) == "function" and typeof(svc) == "Instance" then
-                local okComp, comp = _safe_pcall(function()
-                    local e = svc:CompressBuffer(buf, Enum.CompressionAlgorithm.Zstd, 1)
-                    local d = svc:DecompressBuffer(e, Enum.CompressionAlgorithm.Zstd)
-                    return buffer.tostring(d) == str
-                end)
-                if not okComp or not comp then
-                    _dtc()
-                end
-            end
-        end)
-    end
-end
-
-local function _check_server_service()
-    local ok = _safe_pcall(function()
-        local _ = game:GetService("ServerScriptService"):GetChildren()
-    end)
-    if ok then
-        _dtc()
-    end
-end
-
-local function _check_coroutine_and_metatables()
     if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
         local co = coroutine.create(function()
-            coroutine.yield(10)
-            coroutine.yield(20)
+            coroutine.yield(7)
+            coroutine.yield(14)
         end)
-        local _, v1 = coroutine.resume(co)
-        local _, v2 = coroutine.resume(co)
-        if v1 ~= 10 or v2 ~= 20 then
+        local _, a = coroutine.resume(co)
+        local _, b = coroutine.resume(co)
+        if a ~= 7 or b ~= 14 then
             _dtc()
         end
     end
-    local mt = setmetatable({}, {__index = function(_, k) return tostring(k) .. "_ok" end})
-    if mt["env"] ~= "env_ok" then
+    local mt = setmetatable({}, {__index = function(_, k) return tostring(k) .. "_v" end})
+    if mt["chk"] ~= "chk_v" then
         _dtc()
     end
-    local rawT = setmetatable({}, {__newindex = function() end})
-    if type(rawset) == "function" and type(rawget) == "function" then
-        rawset(rawT, "val", 42)
-        if rawget(rawT, "val") ~= 42 then
-            _dtc()
-        end
-    end
-    _safe_pcall(function()
-        local a = game:GetService("Players")
-        local b = game:GetService("Players")
-        if a ~= b then
-            _dtc()
-        end
-    end)
-    _safe_pcall(function()
-        local obj = Instance.new("Part")
-        obj.Parent = workspace
-        obj:Destroy()
-        if obj.Parent ~= nil then
-            _dtc()
-        end
-    end)
-    _safe_pcall(function()
-        local s = Instance.new("Sound")
-        local okLoud = _safe_pcall(function() s.PlaybackLoudness = 5 end)
-        if okLoud then
-            s:Destroy()
-            _dtc()
-        end
-        s:Destroy()
-    end)
 end
 
-local function _check_debug_constants_and_hooks()
-    _safe_pcall(function()
-        if type(debug) == "table" and type(debug.getconstants) == "function" and type(debug.setconstant) == "function" then
-            local function probeFn()
-                local a = "cat"
-                return a
-            end
-            local c = debug.getconstants(probeFn)
-            local idx = nil
-            if type(c) == "table" then
-                for i, v in pairs(c) do
-                    if v == "cat" then
-                        idx = i
-                        break
-                    end
+local function _check_timing_window()
+    _safe_call(function()
+        if type(os) == "table" and type(os.clock) == "function" and type(task) == "table" and type(task.wait) == "function" and type(math) == "table" and type(math.sin) == "function" then
+            local t1 = os.clock()
+            task.wait(0.12)
+            local t2 = os.clock()
+            local dt = t2 - t1
+            if dt >= 0.11 and dt < 0.8 then
+                local acc = 0
+                local t3 = os.clock()
+                for i = 1, 80000 do
+                    acc = acc + math.sin(i * 0.05)
                 end
-            end
-            if idx and idx > 0 then
-                local st = _safe_pcall(debug.setconstant, probeFn, idx, "dog")
-                if st and probeFn() == "dog" then
+                local t4 = os.clock()
+                if (t4 - t3) <= 0.0001 then
                     _dtc()
                 end
             end
         end
     end)
-    _safe_pcall(function()
-        if type(clonefunction) == "function" and type(hookfunction) == "function" then
-            local function probeA() return 1 end
-            local ca = clonefunction(probeA)
-            local st = _safe_pcall(hookfunction, probeA, function() return 2 end)
-            if st and probeA() == 2 and ca() == 1 then
-                _dtc()
-            end
-        end
-    end)
 end
 
-local function _check_timing_and_env()
-    _safe_pcall(function()
-        if type(getgenv) == "function" and type(typeof) == "function" and typeof(getgenv) == "function" then
-            local c = os.clock
-            local w = task and task.wait
-            local m = math.sin
-            if type(c) == "function" and type(w) == "function" and type(m) == "function" then
-                local t1 = c()
-                w(0.15)
-                local t2 = c()
-                local f = t2 - t1
-                if f >= 0.14 and f < 0.8 then
-                    local a = 0
-                    local t3 = c()
-                    for i = 1, 100000 do
-                        a = a + m(i * 0.05)
-                    end
-                    local t4 = c()
-                    local d = t4 - t3
-                    if d <= 0.0001 or (type(_root) == "table" and typeof(_root.math) ~= "table") then
-                        _dtc()
-                    end
-                end
-            end
-        end
-    end)
-end
-
-_safe_pcall(_check_pools)
-_safe_pcall(_check_spy_and_globals)
-_safe_pcall(_check_print_and_debug)
-_safe_pcall(_check_string_char_and_buffer)
-_safe_pcall(_check_server_service)
-_safe_pcall(_check_coroutine_and_metatables)
-_safe_pcall(_check_debug_constants_and_hooks)
-_safe_pcall(_check_timing_and_env)
+_safe_call(_check_pools)
+_safe_call(_check_spy_and_loggers)
+_safe_call(_check_env_integrity)
+_safe_call(_check_timing_window)
 '''
 
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -381,7 +262,7 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
     tag_guard = ""
     if pool_tags and random.random() < 0.25:
         t = lua_quote(random.choice(pool_tags))
-        tag_guard = buildPolymorphicVM(f"if _RT and _RT[{t}]==nil then _tampered=true {hidden_alert_call()} end ", pool_tags)
+        tag_guard = f"if _T(_RT)=='table' and _RT[{t}]==nil then _tampered=true {hidden_alert_call()} end "
 
     r = random.random()
     if r < 0.35:
@@ -403,25 +284,16 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     B64_TABLE = randomName()
     DECODE_FUNC = randomName()
     CORRUPT_FN = randomName()
-    HEAL_FN = randomName()
     check_tag = lua_quote(random.choice(pool_tags))
 
     vmCore = f"local _tampered=false local {POOL}={{}}local {B_TABLE}={{}}for i=0,255 do {B_TABLE}[i]=_ch(i)end "
     vmCore += f"local {STACK}={{}} local {KEY1}={seed1} local {KEY2}={seed2} "
 
-    # Etapa de auto-reparación / hidratación de entorno antes de validar y ejecutar
-    vmCore += (
-        f"local function {HEAL_FN}() "
-        f"if _T(_RT)~='table' then _RT=_G end "
-        f"if _T(_RT)=='table' and _RT[{check_tag}]==nil then _RT[{check_tag}]=true end "
-        f"end {HEAL_FN}() "
-    )
-
     vmCore += (
         f"local function {CORRUPT_FN}() "
-        f"if _tampered or _T(_RT)~='table' or _RT[{check_tag}]~=true then "
+        f"if _tampered or (_T(_RT)=='table' and _RT[{check_tag}]~=true) then "
         f"{KEY1}=({KEY1}+_fl(_rn(17,97)))%256 {KEY2}=({KEY2}+_fl(_rn(13,89)))%256 "
-        f"{hidden_alert_call()} "
+        f"{hidden_alert_call()}"
         f"end end {CORRUPT_FN}() "
     )
 
@@ -550,13 +422,13 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
         tag_chk = ""
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
-            tag_chk = buildPolymorphicVM(f"if _T(_RT)~='table' or _RT[{t}]~=true then {hidden_alert_call()} end ", pool_tags)
+            tag_chk = f"if _T(_RT)=='table'and _RT[{t}]~=true then {hidden_alert_call()}end "
         nested = f"(function()if _T(pcall)=='function'then pcall(function(){tag_chk}{nested}end)else {tag_chk}{nested}end end)();"
     return nested
 
 def getExtraProtections(pool_tags) -> str:
     checks = "\n".join(
-        f'    if type(_RT) ~= "table" or _RT[{lua_quote(tag)}] ~= true then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
+        f'    if type(_RT) == "table" and _RT[{lua_quote(tag)}] ~= true then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
         for tag in pool_tags
     )
     return f"""
@@ -580,7 +452,7 @@ def build22kBlock(pool_tags) -> str:
         v = randomName()
         k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
-        guarded = buildPolymorphicVM(f"if _RT and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end ", pool_tags)
+        guarded = f"if _T(_RT)=='table'and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()}end "
         mode = random.randint(0, 3)
         if mode == 0:
             item = f"if {generate_opaque_predicate()}then {guarded}{tbl}[{k_idx}]='{sval}' end"
