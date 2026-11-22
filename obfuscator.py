@@ -218,52 +218,62 @@ def applyCFF(blocks, opaque_count: int = 2) -> str:
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
-def runtimeString(s: str) -> str:
-    return '"' + "".join(f"\\{ord(c):03d}" for c in s) + '"'
+# ── CODIFICACIÓN COMPACTA EN BYTES CON XOR ────────────────────────────────
+def encode_bytes_xor(text: str, key: int):
+    raw = text.encode("utf-8")
+    out = []
+    k = key & 0xFF
+    for idx, b in enumerate(raw):
+        out.append(b ^ ((k + idx * 11) & 0xFF))
+        k = (k * 31 + b + idx) & 0xFF
+    return out
 
-def encrypt_chunk_bytes(chunk: str, base_key: int, slot_idx: int):
-    # Cifra cada byte combinando clave base, índice de ranura y posición
-    enc = []
-    state = (base_key + slot_idx * 13) & 0xFF
-    for pos, ch in enumerate(chunk):
-        b = ord(ch)
-        k = (state + pos * 7) & 0xFF
-        enc.append(b ^ k)
-        state = ((state * 31 + b + pos) & 0xFF)
-    return enc
+def build_compact_byte_runner(text: str) -> str:
+    key = random.randint(19, 237)
+    enc = encode_bytes_xor(text, key)
+    bytes_lua = "{" + ",".join(str(x) for x in enc) + "}"
 
-# ── VM CON CIFRADO POR ESTADO/CLAVE Y CAPAS OPACAS ────────────────────────
-def buildTrueVM(payloadStr: str, opaque_count: int = 2) -> str:
-    STACK, POOL, ORDER, KEY_VAR, DEC_FN = (
-        randomName(), randomName(), randomName(), randomName(), randomName()
+    tbl_v, key_v, out_v, i_v, k_v, b_v, fn_v = (
+        randomName(), randomName(), randomName(), randomName(),
+        randomName(), randomName(), randomName()
     )
-    base_key = random.randint(17, 239)
+    loader_v = randomName()
 
-    chunkSize = 24
+    dec_code = (
+        f"local {tbl_v}={bytes_lua} "
+        f"local {key_v}={key} "
+        f"local function {fn_v}() "
+        f"local {out_v}={{}} local {k_v}=bit32.band({key_v},255) "
+        f"for {i_v}=1,#{tbl_v} do "
+        f"local {b_v}=bit32.bxor({tbl_v}[{i_v}],bit32.band({k_v}+({i_v}-1)*11,255)) "
+        f"{out_v}[{i_v}]=string.char({b_v}) "
+        f"{k_v}=bit32.band({k_v}*31+{b_v}+({i_v}-1),255) "
+        f"end "
+        f"return table.concat({out_v}) end "
+        f"local _g=(getgenv and type(getgenv)=='function') and getgenv() or {{}} "
+        f"local {loader_v}=loadstring or _g.loadstring or (getfenv and getfenv().loadstring) "
+        f"if type({loader_v})=='function' then "
+        f"local _ok,_chunk=pcall({loader_v},{fn_v}(),'MoonslotAT') "
+        f"if _ok and type(_chunk)=='function' then pcall(_chunk) end "
+        f"end "
+    )
+    return dec_code
+
+def runtimeString(s: str) -> str:
+    return '"' + "".join(f"\\{ord(c):03d}" for c in s.encode("utf-8")) + '"'
+
+# ── VM COMPACTA CON FRAGMENTOS ESCAPADOS Y ORDEN ALEATORIO ───────────────
+def buildTrueVM(payloadStr: str) -> str:
+    STACK, POOL, ORDER = randomName(), randomName(), randomName()
+    vmCore = f"local {POOL}={{}} "
+
+    chunkSize = 36
     realChunks = [payloadStr[i:i + chunkSize] for i in range(0, len(payloadStr), chunkSize)]
     realOrder = []
-    totalChunks = int(len(realChunks) * 1.25) if len(realChunks) > 1 else 2
+    totalChunks = int(len(realChunks) * 1.2) if len(realChunks) > 1 else 1
     if totalChunks < len(realChunks):
         totalChunks = len(realChunks)
     currentReal = 0
-
-    vmCore = f"local {KEY_VAR}={base_key} local {POOL}={{}} "
-
-    # Función de descifrado en Lua acoplada a índice y posición
-    p_var, s_var, k_var, out_var, i_var, b_var = (
-        randomName(), randomName(), randomName(), randomName(), randomName(), randomName()
-    )
-    vmCore += (
-        f"local function {DEC_FN}({p_var}, {s_var}) "
-        f"local {out_var}={{}} "
-        f"local {k_var}=bit32.band({KEY_VAR} + {s_var} * 13, 255) "
-        f"for {i_var}=1, #{p_var} do "
-        f"local {b_var}=bit32.bxor({p_var}[{i_var}], bit32.band({k_var} + ({i_var}-1) * 7, 255)) "
-        f"{out_var}[{i_var}]=string.char({b_var}) "
-        f"{k_var}=bit32.band({k_var} * 31 + {b_var} + ({i_var}-1), 255) "
-        f"end "
-        f"return table.concat({out_var}) end "
-    )
 
     for i in range(1, totalChunks + 1):
         if currentReal < len(realChunks) and (
@@ -271,14 +281,11 @@ def buildTrueVM(payloadStr: str, opaque_count: int = 2) -> str:
         ):
             realOrder.append(i)
             chunk = realChunks[currentReal]
-            enc_bytes = encrypt_chunk_bytes(chunk, base_key, i)
+            vmCore += f"{POOL}[{i}]={runtimeString(chunk)} "
             currentReal += 1
         else:
-            fake_str = "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(random.randint(6, 16)))
-            enc_bytes = encrypt_chunk_bytes(fake_str, base_key, i)
-
-        bytes_lua = "{" + ",".join(str(x) for x in enc_bytes) + "}"
-        vmCore += f"{POOL}[{i}]={DEC_FN}({bytes_lua},{i}) "
+            fake_str = "".join(random.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(random.randint(5, 14)))
+            vmCore += f"{POOL}[{i}]={runtimeString(fake_str)} "
 
     vmCore += f"local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar = randomName()
@@ -306,10 +313,10 @@ def buildSingleVM(innerCode: str, handlerCount: int, opaque_count: int = 2) -> s
     out += applyCFF(execBlocks, opaque_count=opaque_count)
     return out
 
-# ── 30 CAPAS PARA TODO ────────────────────────────────────────────────────
-def build30xVM(payloadStr: str, opaque_count: int = 2) -> str:
-    vm = buildTrueVM(payloadStr, opaque_count=opaque_count)
-    for _ in range(30):
+# ── CAPAS CONFIGURABLES ──────────────────────────────────────────────────
+def buildLayeredVM(payloadStr: str, layers: int, opaque_count: int = 2) -> str:
+    vm = buildTrueVM(payloadStr)
+    for _ in range(max(0, layers)):
         vm = buildSingleVM(vm, random.randint(3, 4), opaque_count=opaque_count)
     return vm
 
@@ -324,13 +331,20 @@ pcall(function()
 end)
 """
 
-def obfuscate(sourceCode: str, seed: int = 0, opaque_vars: int = 2) -> str:
+def obfuscate(
+    sourceCode: str,
+    seed: int = 0,
+    vm_layers: int = 30,
+    anti_tamper_layers: int = 30,
+    opaque_vars: int = 2,
+) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
+
     antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections()
-    protection_payload = (
+    raw_at_script = (
         "local __run_at = function()\n"
         + ANTI_TAMPER_CORE.strip() + "\n"
         + "end\n"
@@ -339,8 +353,9 @@ def obfuscate(sourceCode: str, seed: int = 0, opaque_vars: int = 2) -> str:
         + extraProts
     )
 
-    # Ambos usan 30 capas
-    final_protection = build30xVM(protection_payload, opaque_count=opaque_vars)
+    # Anti-tamper compacto codificado en bytes + envuelto en capas
+    compact_at_loader = build_compact_byte_runner(raw_at_script)
+    final_protection = buildLayeredVM(compact_at_loader, anti_tamper_layers, opaque_count=opaque_vars)
 
     isLoadstringRegex = re.compile(
         r'loadstring\s*\(\s*game\s*:\s*HttpGet\s*\(\s*["\']([^"\']+)["\']\s*\)\s*\)\s*\(\s*\)',
@@ -353,8 +368,7 @@ def obfuscate(sourceCode: str, seed: int = 0, opaque_vars: int = 2) -> str:
     else:
         payloadToProtect = sourceCode
 
-    # Ambos usan 30 capas
-    final_user_script = build30xVM(payloadToProtect, opaque_count=opaque_vars)
+    final_user_script = buildLayeredVM(payloadToProtect, vm_layers, opaque_count=opaque_vars)
 
     final_code = (
         f"{HEADER}\n\n"
@@ -368,12 +382,20 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--vm-layers', type=int, default=30)
+    ap.add_argument('--anti-tamper-layers', type=int, default=30)
     ap.add_argument('--opaque-vars', type=int, default=2)
     ap.add_argument('--min-size', type=int, default=23000)
     args = ap.parse_args()
     with open(args.input, encoding='utf-8') as f:
         src = f.read()
-    out = obfuscate(src, seed=args.seed, opaque_vars=args.opaque_vars)
+    out = obfuscate(
+        src,
+        seed=args.seed,
+        vm_layers=args.vm_layers,
+        anti_tamper_layers=args.anti_tamper_layers,
+        opaque_vars=args.opaque_vars,
+    )
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write(out)
 
