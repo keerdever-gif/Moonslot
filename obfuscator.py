@@ -260,7 +260,7 @@ def build_compact_byte_runner(text: str) -> str:
     return dec_code
 
 def runtimeString(s: str) -> str:
-    return '"' + "".join(f"\\{ord(c):03d}" for c in s.encode("utf-8")) + '"'
+    return '"' + "".join(f"\\{b:03d}" for b in s.encode("utf-8")) + '"'
 
 # ── VM COMPACTA CON FRAGMENTOS ESCAPADOS Y ORDEN ALEATORIO ───────────────
 def buildTrueVM(payloadStr: str) -> str:
