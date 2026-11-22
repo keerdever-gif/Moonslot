@@ -22,7 +22,7 @@ ANTI_TAMPER_CORE = r'''
 local _s = function(...) return table.concat({...}) end
 local _tampered = false
 local _pool_list = __POOL_LIST_PLACEHOLDER__
-local _root = (getgenv and type(getgenv) == "function") and getgenv() or {}
+local _root = (getgenv and type(getgenv) == "function") and getgenv() or _G
 
 local function _dtc()
     _tampered = true
@@ -53,7 +53,7 @@ local function _check_spy_and_globals()
         end
     end
     pcall(function()
-        if Spy ~= nil then
+        if _G.Spy ~= nil or Spy ~= nil then
             _dtc()
         end
     end)
@@ -248,7 +248,7 @@ def generateSingleJunkLine(pool_tags=None) -> str:
     pool_snippet = ""
     if pool_tags:
         tag = random.choice(pool_tags)
-        pool_snippet = f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or{{}}if type(_rt)=='table'and _rt[{lua_quote(tag)}]==nil then _tampered=true error('Moonslot detect you',0)end "
+        pool_snippet = f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G if type(_rt)=='table'and _rt[{lua_quote(tag)}]==nil then _tampered=true error('Moonslot detect you',0)end "
     variants = [
         f"if {pred} then {pool_snippet}local {v}={random.randint(0,998)} end ",
         f"local {v}={{}}for i=1,16 do {v}[i]=string.rep('x',3)end {pool_snippet}",
@@ -263,10 +263,10 @@ def obfuscate_identifiers(code: str) -> str:
         'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
         'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true',
         'until', 'while', 'pcall', 'type', 'math', 'string', 'table', 'bit32',
-        'game', 'task', 'getfenv', 'getgenv', 'setfenv', 'debug', 'load',
+        'game', 'task', 'loadstring', 'getfenv', 'getgenv', 'setfenv', 'debug',
         'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
         'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
-        'clonefunction', 'hookfunction', '_tampered', 'Spy'
+        'clonefunction', 'hookfunction', '_G', '_tampered', 'Spy'
     }
     local_vars = set(re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code))
     for var in local_vars:
@@ -288,8 +288,6 @@ def applyCFF(blocks) -> str:
 
 def generate_b64_soup(pool, idx, b64, pool_tags=None):
     step = random.randint(5, 11)
-    pieces = [b64[i:i+step] for i in range(0, len(b64), step)]
-    random.shuffle(pieces) if False else None
     pieces_ordered = [b64[i:i+step] for i in range(0, len(b64), step)]
     pieces_table = ",".join(f"'{p}'" for p in pieces_ordered)
 
@@ -322,20 +320,20 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     CORRUPT_FN = randomName()
     check_tag = lua_quote(random.choice(pool_tags))
 
-    vmCore = f"local _tampered=false local {POOL}={{}} local {B_TABLE}={{}}for i=0,255 do {B_TABLE}[i]=string.char(i)end "
+    vmCore = f"local _tampered=false local {POOL}={{}}local {B_TABLE}={{}}for i=0,255 do {B_TABLE}[i]=string.char(i)end "
     vmCore += f"local {STACK}={{}} local {KEY1}={seed1} local {KEY2}={seed2} "
 
     vmCore += (
         f"local function {CORRUPT_FN}() "
-        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or{{}} "
+        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G "
         f"if _tampered or type(_rt)~='table' or _rt[{check_tag}]~=true then "
         f"{KEY1}=({KEY1}+math.random(17,97))%256 {KEY2}=({KEY2}+math.random(13,89))%256 "
         f"error('Moonslot detect you',0) "
         f"end end {CORRUPT_FN}() "
     )
 
-    load_chars = ",".join(str(ord(c)) for c in "load")
-    vmCore += f"local _ld_key=string.char({load_chars}) "
+    ls_chars = ",".join(str(ord(c)) for c in "loadstring")
+    vmCore += f"local _ls_key=string.char({ls_chars}) "
 
     vmCore += f"local {B64_TABLE}='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
     vmCore += f"local function {DECODE_FUNC}(data) local res={{}}local i=1 while i<=#data do "
@@ -378,7 +376,6 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
             b64_fake = base64.b64encode(fake_bytes).decode('ascii')
             soup_items.append(generate_b64_soup(POOL, i, b64_fake, pool_tags))
 
-    # Mezcla visual de la sopa para romper patrones regulares en fila
     random.shuffle(soup_items)
     vmCore += " " + " ".join(soup_items) + " "
 
@@ -392,11 +389,15 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += f"table.insert({STACK},{B_TABLE}[real_b])_gIdx=_gIdx+1 end end "
     vmCore += f"local _e=table.concat({STACK}){STACK}=nil "
 
-    vmCore += "local _env_root=(getgenv and type(getgenv)=='function')and getgenv()or{} "
-    vmCore += "local _fenv=(getfenv and getfenv(0))or _env_root "
-    vmCore += "local _ld_fn=type(load)=='function' and load or _fenv[_ld_key] "
-    vmCore += "if type(_ld_fn)=='function' then local _ok,_res=pcall(_ld_fn,_e) "
-    vmCore += "if _ok and type(_res)=='function' then if type(setfenv)=='function'then pcall(setfenv,_res,_fenv)end pcall(_res)end end "
+    vmCore += "local _g=(getgenv and type(getgenv)=='function')and getgenv()or _G "
+    vmCore += "local _fenv=(getfenv and pcall(getfenv,0))and getfenv(0)or _G "
+    vmCore += "local _env=setmetatable({},{__index=_g}) "
+    vmCore += "local _ls=rawget(_g,_ls_key)or rawget(_fenv,_ls_key)or rawget(_G,_ls_key)or loadstring "
+    vmCore += "if type(_ls)=='function' and type(_e)=='string' and #_e>0 then "
+    vmCore += "local _ok,_res=pcall(_ls,_e) "
+    vmCore += "if _ok and type(_res)=='function' then "
+    vmCore += "if type(setfenv)=='function' then pcall(setfenv,_res,_env) end "
+    vmCore += "pcall(_res) end end "
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
@@ -444,7 +445,7 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
             tag_chk = (
-                f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or{{}} "
+                f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G "
                 f"if type(_rt)~='table' or _rt[{t}]~=true then error('Moonslot detect you',0)end "
             )
         nested = f"(function()pcall(function(){tag_chk}{nested}end)end)();"
@@ -457,7 +458,7 @@ def getExtraProtections(pool_tags) -> str:
     )
     return f"""
 pcall(function()
-    local _rt = (getgenv and type(getgenv) == "function") and getgenv() or {{}}
+    local _rt = (getgenv and type(getgenv) == "function") and getgenv() or _G
 {checks}
     if math.floor(1.5) ~= 1 then error("Moonslot detect you", 0) end
     if string.len("a") ~= 1 then error("Moonslot detect you", 0) end
@@ -467,9 +468,12 @@ end)
 """
 
 def build22kBlock(pool_tags) -> str:
-    """Genera una sopa comprimida de ~15.4 KB (~30% más compacta) sin columnas ordenadas."""
+    """Genera una sopa comprimida (~30% más compacta) sin columnas ordenadas."""
     tbl = randomName()
-    soup = [f"local {tbl}={{}}"]
+    soup = [
+        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G ",
+        f"local {tbl}={{}}"
+    ]
     target_chars = 15400
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
@@ -487,7 +491,7 @@ def build22kBlock(pool_tags) -> str:
         else:
             item = f"if {generate_opaque_predicate()}then {tbl}[{k_idx}]='{sval}' end"
         soup.append(item)
-    random.shuffle(soup[1:])
+    random.shuffle(soup[2:])
     soup.append(f"{tbl}=nil")
     return "".join(soup)
 
@@ -569,7 +573,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 3) -> str:
     anti_tamper_final = buildMultiVM(protection_payload, pool_tags, layers=3)
 
     init_pools = (
-        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or{{}} "
+        f"local _rt=(getgenv and type(getgenv)=='function')and getgenv()or _G "
         f"{reg_pools} "
     )
 
