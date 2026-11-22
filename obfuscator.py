@@ -10,9 +10,13 @@ HEADER = '''--[[
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*\"':;!?")
 
-def generate_anchor_key() -> str:
+def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
-    return f"pool.a.d.d.{suffix}"
+    return f"[pool.a.d.d._{suffix}]"
+
+def compute_pool_count(code_str: str) -> int:
+    kb = len(code_str.encode("utf-8")) // 1024
+    return max(1, kb)
 
 def lua_quote(s: str) -> str:
     escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
@@ -22,13 +26,20 @@ def lua_quote(s: str) -> str:
 ANTI_TAMPER_CORE = r'''
 local _s = function(...) return table.concat({...}) end
 local _tampered = false
-local _anchor_id = __ANCHOR_PLACEHOLDER__
+local _pool_list = __POOL_LIST_PLACEHOLDER__
 local _hooked = _G[_s("is", "function", "hooked")]
 
-local function _check_anchor()
+local function _check_pools()
     local root = (getgenv and type(getgenv) == "function") and getgenv() or _G
-    if type(root) ~= "table" or root[_anchor_id] == nil then
+    if type(root) ~= "table" or type(_pool_list) ~= "table" or #_pool_list == 0 then
         _tampered = true
+        return
+    end
+    for _, key in ipairs(_pool_list) do
+        if root[key] == nil then
+            _tampered = true
+            return
+        end
     end
 end
 
@@ -56,7 +67,7 @@ local function _check_debug()
     end
 end
 
-pcall(_check_anchor)
+pcall(_check_pools)
 pcall(_check_hooks)
 pcall(_check_debug)
 '''
@@ -70,20 +81,27 @@ def generate_opaque_predicate() -> str:
     r = random.randint(1, 100)
     return f"(bit32.bxor({r}, {r}) == 0)"
 
-def generateSingleJunkLine() -> str:
+def generateSingleJunkLine(pool_tags=None) -> str:
     r = random.random()
     pred = generate_opaque_predicate()
     v = randomName()
+    pool_snippet = ""
+    if pool_tags:
+        tag = random.choice(pool_tags)
+        pool_snippet = (
+            f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
+            f"if type(_rt)=='table' and _rt[{lua_quote(tag)}]==nil then _tampered=true end "
+        )
     if r < 0.2:
-        return f"if {pred} then local {v}={random.randint(0, 998)} end "
+        return f"if {pred} then {pool_snippet}local {v}={random.randint(0, 998)} end "
     elif r < 0.4:
-        return f"local {v}={{}} for i=1,50 do {v}[i]=string.rep('x',6) end "
+        return f"local {v}={{}} for i=1,50 do {v}[i]=string.rep('x',6) end {pool_snippet}"
     elif r < 0.6:
-        return f"do local {v}=setmetatable({{}},{{__index=function() return math.random() end,__metatable='locked'}}) end "
+        return f"do local {v}=setmetatable({{}},{{__index=function() return math.random() end,__metatable='locked'}}) end {pool_snippet}"
     elif r < 0.8:
-        return f"pcall(function() if {pred} then return string.len('random') end end) "
+        return f"pcall(function() if {pred} then return string.len('random') end end) {pool_snippet}"
     else:
-        return f"local {v}=math.floor(math.random({random.randint(1,50)},500)) "
+        return f"local {v}=math.floor(math.random({random.randint(1,50)},500)) {pool_snippet}"
 
 def obfuscate_identifiers(code: str) -> str:
     keywords = {
@@ -112,7 +130,7 @@ def applyCFF(blocks) -> str:
     lua += f"elseif {stateVar}=={states[n]} then break end end "
     return lua
 
-def generate_b64_soup(pool, idx, b64):
+def generate_b64_soup(pool, idx, b64, pool_tags=None):
     pieces = [b64[i:i+8] for i in range(0, len(b64), 8)]
     pieces_table = ",".join(f"'{p}'" for p in pieces)
 
@@ -125,12 +143,12 @@ def generate_b64_soup(pool, idx, b64):
     elif r < 0.6:
         return f"if {generate_opaque_predicate()} then {pool}[{idx}]=table.concat({{{pieces_table}}}) end "
     elif r < 0.8:
-        return f"{generateSingleJunkLine()} {pool}[{idx}]=string.format('%s',table.concat({{{pieces_table}}})) "
+        return f"{generateSingleJunkLine(pool_tags)} {pool}[{idx}]=string.format('%s',table.concat({{{pieces_table}}})) "
     else:
         v1, v2 = randomName(), randomName()
         return f"local {v1}={{{pieces_table}}} local {v2}=table.concat({v1}) {pool}[{idx}]={v2} "
 
-def buildTrueVM(payloadStr: str, anchor_key: str) -> str:
+def buildTrueVM(payloadStr: str, pool_tags) -> str:
     STACK, KEY1, KEY2, ORDER, POOL, B_TABLE = (
         randomName(), randomName(), randomName(), randomName(), randomName(), randomName()
     )
@@ -140,16 +158,16 @@ def buildTrueVM(payloadStr: str, anchor_key: str) -> str:
     B64_TABLE = randomName()
     DECODE_FUNC = randomName()
     CORRUPT_FN = randomName()
-    anchor_lua = lua_quote(anchor_key)
+    check_tag = lua_quote(random.choice(pool_tags))
 
     vmCore = f"local {B_TABLE}={{}} for i=0,255 do {B_TABLE}[i]=string.char(i) end "
     vmCore += f"local {STACK}={{}} local {KEY1}={seed1} local {KEY2}={seed2} "
 
-    # Trampa y corrupción silenciosa si falta el ancla o salta _tampered
+    # Trampa y corrupción silenciosa si falta algún pool o salta _tampered
     vmCore += (
         f"local function {CORRUPT_FN}() "
         f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
-        f"if _tampered or type(_rt)~='table' or _rt[{anchor_lua}]~=true then "
+        f"if _tampered or type(_rt)~='table' or _rt[{check_tag}]~=true then "
         f"{KEY1}=({KEY1}+math.random(17,97))%256 {KEY2}=({KEY2}+math.random(13,89))%256 "
         f"end end {CORRUPT_FN}() "
     )
@@ -192,12 +210,12 @@ def buildTrueVM(payloadStr: str, anchor_key: str) -> str:
                 globalIndex += 1
 
             b64_str = base64.b64encode(encryptedBytes).decode('ascii')
-            vmCore += generate_b64_soup(POOL, i, b64_str)
+            vmCore += generate_b64_soup(POOL, i, b64_str, pool_tags)
             currentReal += 1
         else:
             fake_bytes = bytes([random.randint(0, 255) for _ in range(random.randint(5, 25))])
             b64_fake = base64.b64encode(fake_bytes).decode('ascii')
-            vmCore += generate_b64_soup(POOL, i, b64_fake)
+            vmCore += generate_b64_soup(POOL, i, b64_fake, pool_tags)
 
     vmCore += f" local {ORDER}={{{','.join(str(n) for n in realOrder)}}} "
     idxVar, jVar = randomName(), randomName()
@@ -217,7 +235,7 @@ def buildTrueVM(payloadStr: str, anchor_key: str) -> str:
     vmCore += "if _ok and type(_res)=='function' then pcall(setfenv,_res,_env) pcall(_res) end end "
     return vmCore
 
-def buildSingleVM(innerCode: str, handlerCount: int) -> str:
+def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
     style = random.choice(["metatable", "ifchain", "cff"])
     DISPATCH = randomName()
     STORE = randomName()
@@ -226,9 +244,9 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
     realIdx = random.randint(0, handlerCount - 1)
     for i in range(handlerCount):
         if i == realIdx:
-            out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine()}{generateSingleJunkLine()} {innerCode} end "
+            out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine(pool_tags)}{generateSingleJunkLine(pool_tags)} {innerCode} end "
         else:
-            out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine()} return nil end "
+            out += f"{STORE}[{i+1}]=function(lM) {generateSingleJunkLine(pool_tags)} return nil end "
 
     if style == "cff":
         execBlocks = [f"{DISPATCH}[{i+1}]({{}})" for i in range(handlerCount)]
@@ -246,24 +264,34 @@ def buildSingleVM(innerCode: str, handlerCount: int) -> str:
         out += applyCFF(execBlocks)
     return out
 
-def buildMultiVM(payloadStr: str, anchor_key: str, layers: int = 7) -> str:
-    vm = buildTrueVM(payloadStr, anchor_key)
+def buildMultiVM(payloadStr: str, pool_tags, layers: int = 7) -> str:
+    vm = buildTrueVM(payloadStr, pool_tags)
     for _ in range(layers):
-        vm = buildSingleVM(vm, random.randint(3, 4))
+        vm = buildSingleVM(vm, random.randint(3, 4), pool_tags)
     return vm
 
-def buildStackObfuscation(code: str) -> str:
+def buildStackObfuscation(code: str, pool_tags) -> str:
     nested = code
     for _ in range(random.randint(3, 5)):
-        nested = f"(function() pcall(function() {nested} end) end)(); "
+        tag_chk = ""
+        if pool_tags:
+            t = lua_quote(random.choice(pool_tags))
+            tag_chk = (
+                f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
+                f"if type(_rt)~='table' or _rt[{t}]~=true then return end "
+            )
+        nested = f"(function() pcall(function() {tag_chk}{nested} end) end)(); "
     return nested
 
-def getExtraProtections(anchor_key: str) -> str:
-    anchor_lua = lua_quote(anchor_key)
+def getExtraProtections(pool_tags) -> str:
+    checks = "\n".join(
+        f'    if type(_rt) ~= "table" or _rt[{lua_quote(tag)}] ~= true then error("pool missing") end'
+        for tag in pool_tags
+    )
     return f"""
 pcall(function()
     local _rt = (getgenv and type(getgenv) == "function") and getgenv() or _G
-    if type(_rt) ~= "table" or _rt[{anchor_lua}] ~= true then error("anchor missing") end
+{checks}
     if math.floor(1.5) ~= 1 then error("m") end
     if string.len("a") ~= 1 then error("s") end
     local t = setmetatable({{}}, {{__metatable = "locked"}})
@@ -271,7 +299,7 @@ pcall(function()
 end)
 """
 
-def encrypt_final_bundle(lua_code: str, anchor_key: str) -> str:
+def encrypt_final_bundle(lua_code: str, pool_tags) -> str:
     k1 = random.randint(23, 241)
     k2 = random.randint(17, 223)
     raw = lua_code.encode("utf-8")
@@ -282,7 +310,10 @@ def encrypt_final_bundle(lua_code: str, anchor_key: str) -> str:
 
     parts = [b64_bundle[i:i+64] for i in range(0, len(b64_bundle), 64)]
     parts_lua = ",".join(f"'{p}'" for p in parts)
-    anchor_lua = lua_quote(anchor_key)
+    reg_pools = " ".join(
+        f"if type(_rt)=='table' then _rt[{lua_quote(tag)}]=true end"
+        for tag in pool_tags
+    )
 
     V_PARTS, V_DATA, V_B64, V_DEC, V_OUT, V_K1, V_K2, V_LS = (
         randomName(), randomName(), randomName(), randomName(),
@@ -292,7 +323,7 @@ def encrypt_final_bundle(lua_code: str, anchor_key: str) -> str:
     loader = (
         f"local {V_K1}={k1} local {V_K2}={k2} "
         f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
-        f"if type(_rt)=='table' then _rt[{anchor_lua}]=true end "
+        f"{reg_pools} "
         f"local {V_B64}='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
         f"local function {V_DEC}(data) local res={{}} local i=1 while i<=#data do "
         f"local b1,b2,b3,b4=data:byte(i,i+3) "
@@ -374,20 +405,24 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
         return '--ERROR'
     random.seed(seed)
 
-    anchor_key = generate_anchor_key()
-    at_core = ANTI_TAMPER_CORE.replace("__ANCHOR_PLACEHOLDER__", lua_quote(anchor_key))
-    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
-    extraProts = getExtraProtections(anchor_key)
-
     minified_user_code = minify_payload(sourceCode)
     obfuscated_user_code = obfuscate_identifiers(minified_user_code)
 
-    final_user_script = buildMultiVM(obfuscated_user_code, anchor_key, layers=7)
-    final_user_script = buildStackObfuscation(final_user_script)
+    # Cantidad de pools según el peso en KB del código antes de poner los pools
+    pool_count = compute_pool_count(obfuscated_user_code)
+    pool_tags = [generate_pool_tag() for _ in range(pool_count)]
+    pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
+
+    at_core = ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua)
+    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
+    extraProts = getExtraProtections(pool_tags)
+
+    final_user_script = buildMultiVM(obfuscated_user_code, pool_tags, layers=7)
+    final_user_script = buildStackObfuscation(final_user_script, pool_tags)
 
     protection_payload = antiDebug + "\n" + extraProts + "\n" + at_core
     protection_payload = minify_payload(protection_payload)
-    anti_tamper_final = buildMultiVM(protection_payload, anchor_key, layers=5)
+    anti_tamper_final = buildMultiVM(protection_payload, pool_tags, layers=5)
 
     final_code = (
         f"local _mc={{}} for i=1,2000 do _mc[i]=string.rep('X',50) end _mc=nil pcall(collectgarbage) "
@@ -396,7 +431,7 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     )
 
     minified_code = minify_payload(final_code)
-    encrypted_final = encrypt_final_bundle(minified_code, anchor_key)
+    encrypted_final = encrypt_final_bundle(minified_code, pool_tags)
     return HEADER + minify_payload(encrypted_final)
 
 def main():
