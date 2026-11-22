@@ -3,8 +3,8 @@ import random
 import argparse
 
 HEADER = '''--[[
-  Protected by Moonslot - Custom Bytecode VM
-  Unauthorized reproduction or distribution is prohibited.
+  Protected by Moonslot 1.000.01v
+  Join our Discord: https://discord.gg/M5AfTVDxM
 ]]\n'''
 
 # ── ANTI-TAMPER SILENCIOSO Y DEFENSIVO ────────────────────────────────────
@@ -445,7 +445,10 @@ def main():
     parser.add_argument('input', help="Archivo de entrada Lua")
     parser.add_argument('-o', '--output', default='obfuscated.lua', help="Archivo de salida")
     parser.add_argument('--seed', type=int, default=0, help="Semilla")
-    parser.add_argument('--vm-layers', type=int, default=5, help="Capas de VM")
+    
+    # 18 CAPAS POR DEFECTO
+    parser.add_argument('--vm-layers', type=int, default=18, help="Capas de VM (default: 18)")
+    
     parser.add_argument('--anti-tamper-layers', type=int, default=3, help="Capas Anti-Tamper")
     parser.add_argument('--opaque-vars', type=int, default=2, help="Variables opacas")
     parser.add_argument('--polymorphic-mode', choices=['auto', 'table', 'ifchain', 'cff', 'mixed'], default='auto', help="Estilo")
