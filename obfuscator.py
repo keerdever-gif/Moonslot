@@ -153,7 +153,7 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     CORRUPT_FN = randomName()
     check_tag = lua_quote(random.choice(pool_tags))
 
-    vmCore = f"local {B_TABLE}={{}} for i=0,255 do {B_TABLE}[i]=string.char(i) end "
+    vmCore = f"local _tampered=false local {POOL}={{}} local {B_TABLE}={{}} for i=0,255 do {B_TABLE}[i]=string.char(i) end "
     vmCore += f"local {STACK}={{}} local {KEY1}={seed1} local {KEY2}={seed2} "
 
     vmCore += (
