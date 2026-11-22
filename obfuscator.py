@@ -278,23 +278,6 @@ def compile_to_bytecode(code):
     compiler = BytecodeCompiler()
     return compiler.compile_statements(tokens)
 
-# ── CIFRADO DE CONSTANTES (XOR RODANTE) ───────────────────────────────────
-def encrypt_constant(val, seed, idx):
-    """Serializa con tag de tipo y cifra byte a byte."""
-    if isinstance(val, bool): s = "b:1" if val else "b:0"
-    elif isinstance(val, int): s = f"i:{val}"
-    elif isinstance(val, float): s = f"f:{val}"
-    elif isinstance(val, str): s = "s:" + val
-    elif val is None: s = "n:"
-    else: s = "s:" + str(val)
-    
-    b = s.encode('utf-8')
-    encrypted = []
-    for i, byte in enumerate(b):
-        key = (seed * (idx + 1) + 0x5A + i * 7) & 0xFF
-        encrypted.append(byte ^ key)
-    return encrypted
-
 def generate_bytecode(ops, const_pool, seed):
     encoded_ops = []
     acc = seed
@@ -305,15 +288,16 @@ def generate_bytecode(ops, const_pool, seed):
         acc = ((acc * 31 + op + pc) % 256 + 256) % 256
         encoded_ops.append(f"{{{enc_op},{enc_a},{enc_b}}}")
     
-    # Ciframos cada constante como una tabla de bytes
-    cp_entries = []
-    for idx, val in enumerate(const_pool):
-        if idx == 0:  # placeholder None
-            continue
-        encrypted = encrypt_constant(val, seed, idx)
-        cp_entries.append("{" + ",".join(str(b) for b in encrypted) + "}")
+    def repr_val(v):
+        if v is None: return "nil"
+        if isinstance(v, bool): return "true" if v else "false"
+        if isinstance(v, str):
+            esc = v.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+            return f'"{esc}"'
+        return str(v)
     
-    cp_str = "{" + ",".join(cp_entries) + "}"
+    # Constantes normales (sin XOR de bytes)
+    cp_str = "{" + ",".join(repr_val(c) for c in const_pool[1:]) + "}"
     return "{" + ",".join(encoded_ops) + "}", cp_str
 
 # ── POLIMORFISMO (CAPAS) ──────────────────────────────────────────────────
@@ -386,24 +370,6 @@ def buildTrueVM(payloadStr: str, config) -> str:
     vmCore += f"local _consts = {const_pool_str} "
     vmCore += f"local _ops = {encoded_ops_str} "
     
-    # Función de descifrado de constantes (en caliente)
-    vmCore += "local function _dec(idx) "
-    vmCore += "  local e = _consts[idx] if not e then return nil end "
-    vmCore += "  local s = {} "
-    vmCore += "  for i = 1, #e do "
-    vmCore += "    local key = bit32.band((_seed * (idx + 1)) + 0x5A + (i - 1) * 7, 0xFF) "
-    vmCore += "    s[i] = string.char(bit32.bxor(e[i], key)) "
-    vmCore += "  end "
-    vmCore += "  local str = table.concat(s) "
-    vmCore += "  local tag = string.sub(str, 1, 2) "
-    vmCore += "  if tag == 'n:' then return nil "
-    vmCore += "  elseif tag == 'b:' then return string.sub(str, 3) == '1' "
-    vmCore += "  elseif tag == 'i:' then return tonumber(string.sub(str, 3)) "
-    vmCore += "  elseif tag == 'f:' then return tonumber(string.sub(str, 3)) "
-    vmCore += "  elseif tag == 's:' then return string.sub(str, 3) "
-    vmCore += "  else return str end "
-    vmCore += "end "
-    
     vmCore += "local pc = 1 local acc = _seed local regs = {} local running = true "
     vmCore += "local env = (getgenv and type(getgenv)=='function') and getgenv() or _G "
     vmCore += "local unpack_fn = table.unpack or unpack "
@@ -416,17 +382,17 @@ def buildTrueVM(payloadStr: str, config) -> str:
     vmCore += "acc = ((acc * 31 + op + pc) % 256 + 256) % 256 "
     vmCore += "pc = pc + 1 "
     
-    vmCore += "if op == 1 then regs[a] = _dec(b) "
-    vmCore += "elseif op == 2 then regs[a] = env[_dec(b)] "
-    vmCore += "elseif op == 3 then regs[a] = regs[a][_dec(b)] "
+    vmCore += "if op == 1 then regs[a] = _consts[b] "
+    vmCore += "elseif op == 2 then regs[a] = env[_consts[b]] "
+    vmCore += "elseif op == 3 then regs[a] = regs[a][_consts[b]] "
     vmCore += "elseif op == 4 then "
     vmCore += "  local fn = regs[a] local args = {} "
     vmCore += "  for i = 1, b do args[i] = regs[a + i] end "
     vmCore += "  if type(fn) == 'function' then regs[a] = fn(unpack_fn(args)) end "
     vmCore += "elseif op == 5 then pc = b "
     vmCore += "elseif op == 6 then running = false "
-    vmCore += "elseif op == 7 then env[_dec(a)] = regs[b] "
-    vmCore += "elseif op == 8 then regs[a][_dec(b)] = regs[a+1] "
+    vmCore += "elseif op == 7 then env[_consts[a]] = regs[b] "
+    vmCore += "elseif op == 8 then regs[a][_consts[b]] = regs[a+1] "
     vmCore += "elseif op == 9 then if not regs[a] then pc = b end "
     vmCore += "elseif op == 10 then regs[a] = regs[b] "
     vmCore += "end end "
@@ -438,16 +404,21 @@ def obfuscate(sourceCode: str, config: dict) -> str:
     if not sourceCode: return '--ERROR'
     random.seed(config["seed"])
 
+    # 1. Código del usuario
     minified_user_code = minify_payload(sourceCode)
     final_user_script = buildTrueVM(minified_user_code, config)
     
+    # 30 capas de VM para el usuario
     for _ in range(config["vm_layers"]):
         final_user_script = build_polymorphic_layer(final_user_script, config)
         
     final_user_script = f"(function() pcall(function() {final_user_script} end) end)()"
 
+    # 2. Anti-Tamper con las mismas capas
     protection_payload = minify_payload("pcall(function() if type(_G) ~= 'table' then error('g') end end)")
     anti_tamper_final = buildTrueVM(protection_payload, config)
+    
+    # 30 capas de VM para el anti-tamper
     for _ in range(config["anti_tamper_layers"]):
         anti_tamper_final = build_polymorphic_layer(anti_tamper_final, config)
 
@@ -464,12 +435,12 @@ def main():
     parser.add_argument('-o', '--output', default='obfuscated.lua', help="Archivo de salida")
     parser.add_argument('--seed', type=int, default=0, help="Semilla")
     
-    # 28 capas por defecto
-    parser.add_argument('--vm-layers', type=int, default=28, help="Capas de VM (default: 28)")
+    # 30 capas para todo por defecto
+    parser.add_argument('--vm-layers', type=int, default=30, help="Capas de VM para el script del usuario (default: 30)")
+    parser.add_argument('--anti-tamper-layers', type=int, default=30, help="Capas de VM para el Anti-Tamper (default: 30)")
     
-    parser.add_argument('--anti-tamper-layers', type=int, default=3, help="Capas Anti-Tamper")
-    parser.add_argument('--opaque-vars', type=int, default=2, help="Variables opacas")
-    parser.add_argument('--polymorphic-mode', choices=['auto', 'table', 'ifchain', 'cff', 'mixed'], default='auto', help="Estilo")
+    parser.add_argument('--opaque-vars', type=int, default=2, help="Variables opacas por capa")
+    parser.add_argument('--polymorphic-mode', choices=['auto', 'table', 'ifchain', 'cff', 'mixed'], default='auto', help="Estilo de despacho")
 
     args, unknown = parser.parse_known_args()
     config = {
