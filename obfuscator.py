@@ -3,9 +3,7 @@ import random
 import argparse
 import base64
 
-HEADER = '''--[[
-  Protected by Moonslot - Extreme Obfuscation
-  Unauthorized reproduction or distribution is prohibited.
+HEADER = '''--[[this code is protected by Moonslot 1.01v if you want to try https://discord.gg/y5awMv5CK
 ]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*\"':;!?")
