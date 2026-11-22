@@ -9,6 +9,10 @@ HEADER = '''--[[
 ]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
+ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
+
+def hidden_alert_call() -> str:
+    return f"_er(_ch({ALERT_BYTES}),0)"
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
@@ -37,6 +41,7 @@ local _s = function(...) return table.concat({...}) end
 local _tampered = false
 local _pool_list = __POOL_LIST_PLACEHOLDER__
 local _root = (getgenv and type(getgenv) == "function") and getgenv() or _G
+local _msg = (type(string) == "table" and type(string.char) == "function") and string.char(77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117) or "err"
 
 local function _safe_pcall(fn, ...)
     if type(fn) ~= "function" then
@@ -50,7 +55,7 @@ end
 
 local function _dtc()
     _tampered = true
-    error("Moonslot detect you", 0)
+    error(_msg, 0)
 end
 
 local function _check_pools()
@@ -275,7 +280,7 @@ def generateSingleJunkLine(pool_tags=None) -> str:
     pool_snippet = ""
     if pool_tags:
         tag = random.choice(pool_tags)
-        pool_snippet = buildPolymorphicVM(f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true _er('Moonslot detect you',0)end ", pool_tags)
+        pool_snippet = buildPolymorphicVM(f"if _RT and _RT[{lua_quote(tag)}]==nil then _tampered=true {hidden_alert_call()} end ", pool_tags)
     variants = [
         f"if {pred} then {pool_snippet}local {v}={random.randint(0,998)} end ",
         f"local {v}={{}}for i=1,8 do {v}[i]=_rp('x',2)end {pool_snippet}",
@@ -322,7 +327,7 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
     tag_guard = ""
     if pool_tags and random.random() < 0.25:
         t = lua_quote(random.choice(pool_tags))
-        tag_guard = buildPolymorphicVM(f"if _RT and _RT[{t}]==nil then _er('Moonslot detect you',0)end ", pool_tags)
+        tag_guard = buildPolymorphicVM(f"if _RT and _RT[{t}]==nil then {hidden_alert_call()} end ", pool_tags)
 
     r = random.random()
     if r < 0.35:
@@ -332,7 +337,7 @@ def generate_b64_soup(pool, idx, b64, pool_tags=None):
         return f"do local {v}=_tc({{{pieces_table}}})if {generate_opaque_predicate()}then {pool}[{idx}]={v} end end {tag_guard}"
     else:
         v1 = randomName()
-        return f"local {v1}={{{pieces_table}}} {pool}[{idx}]={v1} {tag_guard}"
+        return f"local {v1}=_tc({{{pieces_table}}}) {pool}[{idx}]={v1} {tag_guard}"
 
 def buildTrueVM(payloadStr: str, pool_tags) -> str:
     STACK, KEY1, KEY2, ORDER, POOL, B_TABLE = (
@@ -353,7 +358,7 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
         f"local function {CORRUPT_FN}() "
         f"if _tampered or _T(_RT)~='table' or _RT[{check_tag}]~=true then "
         f"{KEY1}=({KEY1}+_fl(_rn(17,97)))%256 {KEY2}=({KEY2}+_fl(_rn(13,89)))%256 "
-        f"_er('Moonslot detect you',0) "
+        f"{hidden_alert_call()} "
         f"end end {CORRUPT_FN}() "
     )
 
@@ -416,7 +421,7 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += "local _fenv=(getfenv and _T(getfenv)=='function' and _T(pcall)=='function' and pcall(getfenv,0))and getfenv(0)or _G "
     vmCore += "local _env=_T(_g)=='table'and setmetatable({},{__index=_g})or _G "
     vmCore += "local _rg=_T(rawget)=='function'and rawget or function(t,k)return _T(t)=='table'and t[k]or nil end "
-    vmCore += "local _ls=_rg(_g,_lsk)or _rg(_fenv,_lsk)or _rg(_G,_lsk)or loadstring "
+    vmCore += "local _ls=_rg(_g,_ls_key)or _rg(_fenv,_ls_key)or _rg(_G,_ls_key)or loadstring "
     vmCore += "if _T(_ls)=='function' and _T(_e)=='string' and #_e>0 then "
     vmCore += "local _ok,_res=_T(pcall)=='function'and pcall(_ls,_e)or true,_ls(_e) "
     vmCore += "if _ok and _T(_res)=='function' then "
@@ -435,7 +440,7 @@ def buildPolymorphicVM(innerCode: str, pool_tags=None, handlerCount: int = 3) ->
     for i in range(handlerCount):
         junk = random.choice([
             f"local {randomName()}={random.randint(1,999)} ",
-            f"if {generate_opaque_predicate()}then local {randomName()}={_BASE36[random.randint(0,35)]!r} end ",
+            f"if {generate_opaque_predicate()}then local {randomName()}='{_BASE36[random.randint(0,35)]}' end ",
             "",
         ])
         if i == realIdx:
@@ -446,8 +451,7 @@ def buildPolymorphicVM(innerCode: str, pool_tags=None, handlerCount: int = 3) ->
 
     if style == "closure_tbl":
         fnVar = randomName()
-        out = f"local {STORE}={{}} " + " ".join(handlers) + f" local {fnVar}={STORE}[{realIdx+1}] if {generate_opaque_predicate()}then {fnVar}({{}})end "
-        return out
+        return f"local {STORE}={{}} " + " ".join(handlers) + f" local {fnVar}={STORE}[{realIdx+1}] if {generate_opaque_predicate()}then {fnVar}({{}})end "
 
     out = f"local {STORE}={{}}local {MT}={{__index=function(t,k)return {STORE}[k]end,__metatable='locked'}}local {DISPATCH}=setmetatable({{}},{MT}) "
     out += " ".join(handlers) + " "
@@ -483,23 +487,23 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
         tag_chk = ""
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
-            tag_chk = buildPolymorphicVM(f"if _T(_RT)~='table' or _RT[{t}]~=true then _er('Moonslot detect you',0)end ", pool_tags)
+            tag_chk = buildPolymorphicVM(f"if _T(_RT)~='table' or _RT[{t}]~=true then {hidden_alert_call()} end ", pool_tags)
         nested = f"(function()if _T(pcall)=='function'then pcall(function(){tag_chk}{nested}end)else {tag_chk}{nested}end end)();"
     return nested
 
 def getExtraProtections(pool_tags) -> str:
     checks = "\n".join(
-        f'    if type(_RT) ~= "table" or _RT[{lua_quote(tag)}] ~= true then error("Moonslot detect you", 0) end'
+        f'    if type(_RT) ~= "table" or _RT[{lua_quote(tag)}] ~= true then error(string.char({ALERT_BYTES}), 0) end'
         for tag in pool_tags
     )
     return f"""
 if type(pcall) == "function" then
     pcall(function()
 {checks}
-        if math.floor(1.5) ~= 1 then error("Moonslot detect you", 0) end
-        if string.len("a") ~= 1 then error("Moonslot detect you", 0) end
+        if math.floor(1.5) ~= 1 then error(string.char({ALERT_BYTES}), 0) end
+        if string.len("a") ~= 1 then error(string.char({ALERT_BYTES}), 0) end
         local t = setmetatable({{}}, {{__metatable = "locked"}})
-        if getmetatable(t) ~= "locked" then error("Moonslot detect you", 0) end
+        if getmetatable(t) ~= "locked" then error(string.char({ALERT_BYTES}), 0) end
     end)
 end
 """
@@ -507,13 +511,13 @@ end
 def build22kBlock(pool_tags) -> str:
     tbl = randomName()
     soup = [f"local {tbl}={{}}"]
-    target_chars = 6800
+    target_chars = 3200
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
         v = randomName()
         k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
-        guarded = buildPolymorphicVM(f"if _RT and _RT[{tag}]==nil then _er('Moonslot detect you',0)end ", pool_tags)
+        guarded = buildPolymorphicVM(f"if _RT and _RT[{tag}]==nil then {hidden_alert_call()} end ", pool_tags)
         mode = random.randint(0, 3)
         if mode == 0:
             item = f"if {generate_opaque_predicate()}then {guarded}{tbl}[{k_idx}]='{sval}' end"
