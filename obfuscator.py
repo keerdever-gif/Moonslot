@@ -3,7 +3,9 @@ import random
 import argparse
 import base64
 
-HEADER = '''--[[this code is protected by Moonslot 1.01v if you want to try https://discord.gg/y5awMv5CK
+HEADER = '''--[[
+  Protected by Moonslot - Extreme Obfuscation
+  Unauthorized reproduction or distribution is prohibited.
 ]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*\"':;!?")
@@ -20,49 +22,215 @@ ANTI_TAMPER_CORE = r'''
 local _s = function(...) return table.concat({...}) end
 local _tampered = false
 local _pool_list = __POOL_LIST_PLACEHOLDER__
-local _hooked = _G[_s("is", "function", "hooked")]
+local _root = (getgenv and type(getgenv) == "function") and getgenv() or {}
+
+local function _dtc()
+    _tampered = true
+    error("Moonslot detect you", 0)
+end
 
 local function _check_pools()
-    local root = (getgenv and type(getgenv) == "function") and getgenv() or _G
-    if type(root) ~= "table" or type(_pool_list) ~= "table" or #_pool_list == 0 then
-        _tampered = true
-        return
+    if type(_root) ~= "table" or type(_pool_list) ~= "table" or #_pool_list == 0 then
+        _dtc()
     end
     for _, key in ipairs(_pool_list) do
-        if root[key] == nil then
-            _tampered = true
-            return
+        if _root[key] == nil then
+            _dtc()
         end
     end
 end
 
-local function _check_hooks()
-    if type(_hooked) == "function" then
-        local fns = {pcall, type, tostring, next, pairs, rawget, rawset, setmetatable, getfenv, setfenv}
-        for _, fn in ipairs(fns) do
-            local ok, res = pcall(_hooked, fn)
-            if ok and res == true then _tampered = true end
+local function _check_spy_and_globals()
+    if type(_root) == "table" then
+        if rawget(_root, "Spy") ~= nil then
+            _dtc()
+        end
+        for k, v in pairs(_root) do
+            local ks = tostring(k)
+            if type(v) == "function" and (string.find(ks, "hook") or string.find(ks, "detour") or string.find(ks, "logger") or string.find(ks, "spy")) then
+                _dtc()
+            end
         end
     end
-    local env = (getgenv and type(getgenv) == "function") and getgenv() or _G
-    for k, v in pairs(env) do
-        local ks = tostring(k)
-        if type(v) == "function" and (string.find(ks, "hook") or string.find(ks, "detour") or string.find(ks, "clone")) then
-            _tampered = true
+    pcall(function()
+        if Spy ~= nil then
+            _dtc()
         end
-    end
+    end)
 end
 
-local function _check_debug()
+local function _check_print_and_debug()
+    if type(tostring(print)) == "string" and tostring(print):match("^function: 0x0000") then
+        _dtc()
+    end
     if type(debug) == "table" and type(debug.gethook) == "function" then
         local ok, hook = pcall(debug.gethook)
-        if ok and hook ~= nil then _tampered = true end
+        if ok and hook ~= nil then
+            _dtc()
+        end
     end
+    pcall(function()
+        if type(debug) == "table" and type(debug.getinfo) == "function" then
+            local info = debug.getinfo(function() end, "u")
+            if type(info) ~= "table" or info.nups == nil then
+                _dtc()
+            end
+        end
+    end)
+end
+
+local function _check_string_char_and_buffer()
+    local okChar, resChar = pcall(string.char, nil)
+    if okChar and resChar == "" then
+        _dtc()
+    end
+    if type(buffer) == "table" and type(buffer.fromstring) == "function" then
+        pcall(function()
+            local str = "moonslot_env_check"
+            local buf = buffer.fromstring(str)
+            local okSvc, svc = pcall(function() return game:GetService("EncodingService") end)
+            if okSvc and typeof(svc) == "Instance" then
+                local okComp, comp = pcall(function()
+                    local e = svc:CompressBuffer(buf, Enum.CompressionAlgorithm.Zstd, 1)
+                    local d = svc:DecompressBuffer(e, Enum.CompressionAlgorithm.Zstd)
+                    return buffer.tostring(d) == str
+                end)
+                if not okComp or not comp then
+                    _dtc()
+                end
+            end
+        end)
+    end
+end
+
+local function _check_server_service()
+    local ok = pcall(function()
+        local _ = game:GetService("ServerScriptService"):GetChildren()
+    end)
+    if ok then
+        _dtc()
+    end
+end
+
+local function _check_coroutine_and_metatables()
+    if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
+        local co = coroutine.create(function()
+            coroutine.yield(10)
+            coroutine.yield(20)
+        end)
+        local _, v1 = coroutine.resume(co)
+        local _, v2 = coroutine.resume(co)
+        if v1 ~= 10 or v2 ~= 20 then
+            _dtc()
+        end
+    end
+    local mt = setmetatable({}, {__index = function(_, k) return tostring(k) .. "_ok" end})
+    if mt["env"] ~= "env_ok" then
+        _dtc()
+    end
+    local rawT = setmetatable({}, {__newindex = function() end})
+    if type(rawset) == "function" and type(rawget) == "function" then
+        rawset(rawT, "val", 42)
+        if rawget(rawT, "val") ~= 42 then
+            _dtc()
+        end
+    end
+    pcall(function()
+        local a = game:GetService("Players")
+        local b = game:GetService("Players")
+        if a ~= b then
+            _dtc()
+        end
+    end)
+    pcall(function()
+        local obj = Instance.new("Part")
+        obj.Parent = workspace
+        obj:Destroy()
+        if obj.Parent ~= nil then
+            _dtc()
+        end
+    end)
+    pcall(function()
+        local s = Instance.new("Sound")
+        if pcall(function() s.PlaybackLoudness = 5 end) then
+            s:Destroy()
+            _dtc()
+        end
+        s:Destroy()
+    end)
+end
+
+local function _check_debug_constants_and_hooks()
+    pcall(function()
+        if type(debug) == "table" and type(debug.getconstants) == "function" and type(debug.setconstant) == "function" then
+            local function probeFn()
+                local a = "cat"
+                return a
+            end
+            local c = debug.getconstants(probeFn)
+            local idx = nil
+            if type(c) == "table" then
+                for i, v in pairs(c) do
+                    if v == "cat" then
+                        idx = i
+                        break
+                    end
+                end
+            end
+            if idx and idx > 0 then
+                local st = pcall(debug.setconstant, probeFn, idx, "dog")
+                if st and probeFn() == "dog" then
+                    _dtc()
+                end
+            end
+        end
+    end)
+    pcall(function()
+        if type(clonefunction) == "function" and type(hookfunction) == "function" then
+            local function probeA() return 1 end
+            local ca = clonefunction(probeA)
+            local st = pcall(hookfunction, probeA, function() return 2 end)
+            if st and probeA() == 2 and ca() == 1 then
+                _dtc()
+            end
+        end
+    end)
+end
+
+local function _check_timing_and_env()
+    pcall(function()
+        if type(getgenv) == "function" and typeof(getgenv) == "function" then
+            local c = os.clock
+            local w = task.wait
+            local m = math.sin
+            local t1 = c()
+            w(0.15)
+            local t2 = c()
+            local f = t2 - t1
+            if f >= 0.14 and f < 0.8 then
+                local a = 0
+                local t3 = c()
+                for i = 1, 100000 do
+                    a = a + m(i * 0.05)
+                end
+                local t4 = c()
+                local d = t4 - t3
+                if d <= 0.0001 or typeof(_root.math) ~= "table" then
+                    _dtc()
+                end
+            end
+        end
+    end)
 end
 
 pcall(_check_pools)
-pcall(_check_hooks)
-pcall(_check_debug)
+pcall(_check_spy_and_globals)
+pcall(_check_print_and_debug)
+pcall(_check_string_char_and_buffer)
+pcall(_check_server_service)
+pcall(_check_coroutine_and_metatables)
+pcall(_check_debug_constants_and_hooks)
+pcall(_check_timing_and_env)
 '''
 
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
@@ -82,8 +250,8 @@ def generateSingleJunkLine(pool_tags=None) -> str:
     if pool_tags:
         tag = random.choice(pool_tags)
         pool_snippet = (
-            f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
-            f"if type(_rt)=='table' and _rt[{lua_quote(tag)}]==nil then _tampered=true end "
+            f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or {{}} "
+            f"if type(_rt)=='table' and _rt[{lua_quote(tag)}]==nil then _tampered=true error('Moonslot detect you',0) end "
         )
     if r < 0.2:
         return f"if {pred} then {pool_snippet}local {v}={random.randint(0, 998)} end "
@@ -101,9 +269,10 @@ def obfuscate_identifiers(code: str) -> str:
         'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
         'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true',
         'until', 'while', 'pcall', 'type', 'math', 'string', 'table', 'bit32',
-        'game', 'task', 'loadstring', 'getfenv', 'getgenv', 'setfenv', 'debug',
+        'game', 'task', 'getfenv', 'getgenv', 'setfenv', 'debug', 'load',
         'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
-        'getmetatable', '_G', '_tampered'
+        'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
+        'clonefunction', 'hookfunction', '_tampered', 'Spy'
     }
     local_vars = set(re.findall(r'\blocal\s+([a-zA-Z_][a-zA-Z0-9_]*)', code))
     for var in local_vars:
@@ -156,14 +325,16 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
 
     vmCore += (
         f"local function {CORRUPT_FN}() "
-        f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
+        f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or {{}} "
         f"if _tampered or type(_rt)~='table' or _rt[{check_tag}]~=true then "
         f"{KEY1}=({KEY1}+math.random(17,97))%256 {KEY2}=({KEY2}+math.random(13,89))%256 "
+        f"error('Moonslot detect you',0) "
         f"end end {CORRUPT_FN}() "
     )
 
-    ls_chars = ",".join(str(ord(c)) for c in "loadstring")
-    vmCore += f"local _ls_name=string.char({ls_chars}) "
+    # Sin loadstring ni _G: compilación mediante 'load' en entorno aislado local
+    load_chars = ",".join(str(ord(c)) for c in "load")
+    vmCore += f"local _ld_key=string.char({load_chars}) "
 
     vmCore += f"local {B64_TABLE}='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/' "
     vmCore += f"local function {DECODE_FUNC}(data) local res={{}} local i=1 while i<=#data do "
@@ -215,11 +386,12 @@ def buildTrueVM(payloadStr: str, pool_tags) -> str:
     vmCore += f"table.insert({STACK},{B_TABLE}[real_b]) _gIdx=_gIdx+1 end end "
     vmCore += f"local _e=table.concat({STACK}) {STACK}=nil "
 
-    vmCore += "local _g=(getgenv and type(getgenv)=='function') and getgenv() or _G "
-    vmCore += "local _env=setmetatable({},{__index=_g}) "
-    vmCore += "local _ls=_g[_ls_name] or (getfenv and getfenv()[_ls_name]) or loadstring "
-    vmCore += "if type(_ls)=='function' then local _ok,_res=pcall(_ls,_e,'=') "
-    vmCore += "if _ok and type(_res)=='function' then pcall(setfenv,_res,_env) pcall(_res) end end "
+    # Ejecución vía 'load' desde entorno local sin tocar _G ni usar loadstring
+    vmCore += "local _env_root=(getgenv and type(getgenv)=='function') and getgenv() or {} "
+    vmCore += "local _fenv=(getfenv and getfenv(0)) or _env_root "
+    vmCore += "local _ld_fn=type(load)=='function' and load or _fenv[_ld_key] "
+    vmCore += "if type(_ld_fn)=='function' then local _ok,_res=pcall(_ld_fn,_e) "
+    vmCore += "if _ok and type(_res)=='function' then if type(setfenv)=='function' then pcall(setfenv,_res,_fenv) end pcall(_res) end end "
     return vmCore
 
 def buildSingleVM(innerCode: str, handlerCount: int, pool_tags) -> str:
@@ -264,27 +436,49 @@ def buildStackObfuscation(code: str, pool_tags) -> str:
         if pool_tags:
             t = lua_quote(random.choice(pool_tags))
             tag_chk = (
-                f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
-                f"if type(_rt)~='table' or _rt[{t}]~=true then return end "
+                f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or {{}} "
+                f"if type(_rt)~='table' or _rt[{t}]~=true then error('Moonslot detect you',0) end "
             )
         nested = f"(function() pcall(function() {tag_chk}{nested} end) end)(); "
     return nested
 
 def getExtraProtections(pool_tags) -> str:
     checks = "\n".join(
-        f'    if type(_rt) ~= "table" or _rt[{lua_quote(tag)}] ~= true then error("pool missing") end'
+        f'    if type(_rt) ~= "table" or _rt[{lua_quote(tag)}] ~= true then error("Moonslot detect you", 0) end'
         for tag in pool_tags
     )
     return f"""
 pcall(function()
-    local _rt = (getgenv and type(getgenv) == "function") and getgenv() or _G
+    local _rt = (getgenv and type(getgenv) == "function") and getgenv() or {{}}
 {checks}
-    if math.floor(1.5) ~= 1 then error("m") end
-    if string.len("a") ~= 1 then error("s") end
+    if math.floor(1.5) ~= 1 then error("Moonslot detect you", 0) end
+    if string.len("a") ~= 1 then error("Moonslot detect you", 0) end
     local t = setmetatable({{}}, {{__metatable = "locked"}})
-    if getmetatable(t) ~= "locked" then error("mt") end
+    if getmetatable(t) ~= "locked" then error("Moonslot detect you", 0) end
 end)
 """
+
+def build22kBlock(pool_tags) -> str:
+    """Genera un bloque denso de ~22 KB repetible con trampas y tablas."""
+    tbl = randomName()
+    parts = [f"local {tbl}={{}} "]
+    target_chars = 22000
+    idx = 1
+    while len("".join(parts)) < target_chars:
+        tag = lua_quote(random.choice(pool_tags))
+        v = randomName()
+        chunk = (
+            f"if {generate_opaque_predicate()} then "
+            f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or {{}} "
+            f"if type(_rt)=='table' and _rt[{tag}]==nil then error('Moonslot detect you',0) end "
+            f"local {v}='{''.join(random.choice(_BASE36) for _ in range(48))}' "
+            f"{tbl}[{idx}]={v} "
+            f"end "
+        )
+        parts.append(chunk)
+        idx += 1
+    parts.append(f"{tbl}=nil ")
+    return "".join(parts)
 
 def minify_payload(code):
     code = re.sub(r'--\[\[.*?\]\]', '', code, flags=re.DOTALL)
@@ -336,7 +530,7 @@ def minify_payload(code):
                 out.append(' ')
     return ''.join(out)
 
-def obfuscate(sourceCode: str, seed: int = 0) -> str:
+def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 3) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
@@ -353,7 +547,7 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     obfuscated_user_code = obfuscate_identifiers(minified_user_code)
 
     at_core = ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua)
-    antiDebug = "local _t=tick() for _=1,150000 do end if tick()-_t>5.0 then while true do task.wait(0.1) end end "
+    antiDebug = "local _t=os.clock() for _=1,150000 do end if os.clock()-_t>5.0 then while true do task.wait(0.1) end end "
     extraProts = getExtraProtections(pool_tags)
 
     final_user_script = buildMultiVM(obfuscated_user_code, pool_tags, layers=5)
@@ -364,13 +558,16 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     anti_tamper_final = buildMultiVM(protection_payload, pool_tags, layers=4)
 
     init_pools = (
-        f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or _G "
+        f"local _rt=(getgenv and type(getgenv)=='function') and getgenv() or {{}} "
         f"{reg_pools} "
     )
+
+    filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
 
     final_code = (
         f"local _mc={{}} for i=1,1000 do _mc[i]=string.rep('X',40) end _mc=nil pcall(collectgarbage) "
         f"{init_pools}"
+        f"{filler_22k}"
         f"{anti_tamper_final} "
         f"{final_user_script}"
     )
@@ -382,13 +579,14 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--repeat-22k', type=int, default=3)
 
     args, _ = ap.parse_known_args()
 
     try:
         with open(args.input, encoding='utf-8') as f:
             src = f.read()
-        out = obfuscate(src, seed=args.seed)
+        out = obfuscate(src, seed=args.seed, repeat_22k=args.repeat_22k)
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(out)
     except Exception as e:
