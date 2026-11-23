@@ -80,13 +80,18 @@ def _decode_lua_string_literal(val: str) -> str | None:
 
 
 def encode_lua_string(s: str) -> str:
-    """Codifica una cadena en bytes decimales con clave XOR aleatoria y decodificador en tiempo de ejecución."""
+    """Codifica una cadena en bytes decimales con clave XOR aleatoria y decodificador autónomo."""
     raw = s.encode("utf-8")
     if not raw:
         return "''"
     key = random.randint(17, 239)
     encoded_bytes = ",".join(str(b ^ key) for b in raw)
-    return f"(function()local _s=''for _,_b in ipairs({{{encoded_bytes}}})do _s=_s.._ch(_bx(_b,{key}))end return _s end)()"
+    return (
+        f"(function()local _c=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return '' end "
+        f"local _x=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
+        f"local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
+        f"local _s=''for _,_b in ipairs({{{encoded_bytes}}})do _s=_s.._c(_x(_b,{key}))end return _s end)()"
+    )
 
 
 def obfuscate_number(n: int) -> str:
@@ -714,10 +719,7 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"or (_T(load)=='function' and load)or nil "
         f"if _T(_fn)=='function' then "
         f"local _ok,_chunk=pcall(_fn,_src) "
-        f"if _ok and _T(_chunk)=='function' then "
-        f"local _runOk,_runErr=pcall(_chunk) "
-        f"if not _runOk and type(warn)=='function' then warn('[MOONSLOT RUN ERR]: '..tostring(_runErr)) end "
-        f"elseif not _ok and type(warn)=='function' then warn('[MOONSLOT LOAD ERR]: '..tostring(_chunk)) end "
+        f"if _ok and _T(_chunk)=='function' then pcall(_chunk) end "
         f"end "
         f"end "
     )
