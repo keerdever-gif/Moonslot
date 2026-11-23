@@ -424,8 +424,7 @@ def build22kBlock(pool_tags) -> str:
     return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
-    seed1 = random.randint(15, 240)
-    seed2 = random.randint(15, 240)
+    # Solo opcodes (sin ofuscar/cifrar bytes), enlazado con las variables pools
     raw = payloadStr.encode("utf-8")
 
     op_push = random.randint(10, 80)
@@ -433,17 +432,15 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
     op_end = random.randint(161, 240)
 
     inst = []
-    for idx, b in enumerate(raw):
-        enc = b ^ ((seed1 + idx * seed2) & 0xFF)
-        if random.random() < 0.15:
-            inst.append(f"{{{op_nop},{random.randint(0,255)}}}")
-        inst.append(f"{{{op_push},{enc}}}")
+    for b in raw:
+        if random.random() < 0.12:
+            inst.append(f"{{{op_nop},0}}")
+        inst.append(f"{{{op_push},{b}}}")
     inst.append(f"{{{op_end},0}}")
 
     INST_TBL = randomName()
     PC = randomName()
     BUF = randomName()
-    IDX = randomName()
     OP_V = randomName()
     ARG_V = randomName()
     POOL_REF = randomName()
@@ -453,15 +450,13 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"local {POOL_REF}=_T(_RT)=='table' and _RT or _G "
         f"if _T({POOL_REF})=='table' and {POOL_REF}[{CHK_TAG}]==nil then {hidden_alert_call()} end "
         f"local {INST_TBL}={{{','.join(inst)}}} "
-        f"local {BUF}={{}} local {PC}=1 local {IDX}=0 "
+        f"local {BUF}={{}} local {PC}=1 "
         f"while {PC}<=#{INST_TBL} do "
         f"if _T({POOL_REF})=='table' and {POOL_REF}[{CHK_TAG}]~=true then {hidden_alert_call()} break end "
         f"local _ins={INST_TBL}[{PC}] "
         f"local {OP_V}, {ARG_V} = _ins[1], _ins[2] "
         f"if {OP_V}=={op_push} then "
-        f"local _rot=({seed1}+{IDX}*{seed2})%256 "
-        f"local _rb=_fl(_bx({ARG_V},_rot))%256 "
-        f"_ti({BUF},_ch(_rb)) {IDX}={IDX}+1 "
+        f"_ti({BUF},_ch({ARG_V})) "
         f"elseif {OP_V}=={op_end} then break end "
         f"{PC}={PC}+1 end "
         f"local _src=_tc({BUF}) {BUF}=nil "
