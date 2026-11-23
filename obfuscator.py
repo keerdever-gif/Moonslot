@@ -19,7 +19,7 @@ def generate_pool_tag() -> str:
     return f"[pool.a.d.d._{suffix}]"
 
 def lua_quote(s: str) -> str:
-    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+    escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
     return f'"{escaped}"'
 
 BOOTSTRAP_HELPERS = (
@@ -392,9 +392,10 @@ def minify_payload(code: str) -> str:
     return ''.join(out).strip()
 
 def getExtraProtections(pool_tags) -> str:
+    sample_tags = pool_tags[:4] if len(pool_tags) > 4 else pool_tags
     checks = "\n".join(
         f'    if type(_RT) == "table" and _RT[{lua_quote(tag)}] ~= true then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
-        for tag in pool_tags
+        for tag in sample_tags
     )
     return f"""
 if type(pcall) == "function" then
@@ -424,18 +425,19 @@ def build22kBlock(pool_tags) -> str:
     return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
-    # Solo opcodes (sin ofuscar/cifrar bytes), enlazado con las variables pools
-    raw = payloadStr.encode("utf-8")
-
-    op_push = random.randint(10, 80)
+    # Opcodes compactos por bloques enlazados con las variables pools (sin 1 par por byte)
+    op_chunk = random.randint(10, 80)
     op_nop = random.randint(81, 160)
     op_end = random.randint(161, 240)
 
+    chunk_size = 48
+    parts = [payloadStr[i:i + chunk_size] for i in range(0, len(payloadStr), chunk_size)]
+
     inst = []
-    for b in raw:
+    for part in parts:
         if random.random() < 0.12:
             inst.append(f"{{{op_nop},0}}")
-        inst.append(f"{{{op_push},{b}}}")
+        inst.append(f"{{{op_chunk},{lua_quote(part)}}}")
     inst.append(f"{{{op_end},0}}")
 
     INST_TBL = randomName()
@@ -455,8 +457,8 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"if _T({POOL_REF})=='table' and {POOL_REF}[{CHK_TAG}]~=true then {hidden_alert_call()} break end "
         f"local _ins={INST_TBL}[{PC}] "
         f"local {OP_V}, {ARG_V} = _ins[1], _ins[2] "
-        f"if {OP_V}=={op_push} then "
-        f"_ti({BUF},_ch({ARG_V})) "
+        f"if {OP_V}=={op_chunk} then "
+        f"_ti({BUF},{ARG_V}) "
         f"elseif {OP_V}=={op_end} then break end "
         f"{PC}={PC}+1 end "
         f"local _src=_tc({BUF}) {BUF}=nil "
