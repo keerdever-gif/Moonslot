@@ -31,6 +31,54 @@ def lua_quote(s: str) -> str:
     return f'"{escaped}"'
 
 
+def _decode_lua_string_literal(val: str) -> str | None:
+    if len(val) < 2 or val[0] not in ('"', "'") or val[-1] != val[0]:
+        return None
+    body = val[1:-1]
+    out_chars = []
+    i = 0
+    n = len(body)
+    escape_map = {
+        "a": "\a",
+        "b": "\b",
+        "f": "\f",
+        "n": "\n",
+        "r": "\r",
+        "t": "\t",
+        "v": "\v",
+        "\\": "\\",
+        '"': '"',
+        "'": "'",
+    }
+    while i < n:
+        ch = body[i]
+        if ch != "\\":
+            out_chars.append(ch)
+            i += 1
+            continue
+        i += 1
+        if i >= n:
+            return None
+        esc = body[i]
+        if esc in escape_map:
+            out_chars.append(escape_map[esc])
+            i += 1
+        elif esc.isdigit():
+            digits = esc
+            i += 1
+            while i < n and len(digits) < 3 and body[i].isdigit():
+                digits += body[i]
+                i += 1
+            code_val = int(digits)
+            if code_val > 255:
+                return None
+            out_chars.append(chr(code_val))
+        else:
+            out_chars.append(esc)
+            i += 1
+    return "".join(out_chars)
+
+
 def encode_lua_string(s: str) -> str:
     """Codifica una cadena en bytes decimales con clave XOR aleatoria y decodificador en tiempo de ejecución."""
     raw = s.encode("utf-8")
@@ -138,18 +186,18 @@ local function _check_pools()
 end
 
 local function _check_spy_and_loggers()
-    if type(_root) == "table" then
-        if type(rawget) == "function" and rawget(_root, "Spy") ~= nil then
-            _dtc()
-        end
-        for k, v in pairs(_root) do
-            local ks = tostring(k):lower()
-            if type(v) == "function" and (ks:find("spy", 1, true) or ks:find("remotespy", 1, true) or ks:find("httplog", 1, true)) then
+    _safe_call(function()
+        if type(_root) == "table" then
+            if type(rawget) == "function" and rawget(_root, "Spy") ~= nil then
                 _dtc()
             end
+            for k, v in pairs(_root) do
+                local ks = tostring(k):lower()
+                if type(v) == "function" and (ks:find("spy", 1, true) or ks:find("remotespy", 1, true) or ks:find("httplog", 1, true)) then
+                    _dtc()
+                end
+            end
         end
-    end
-    _safe_call(function()
         if _G and type(rawget) == "function" and rawget(_G, "Spy") ~= nil then
             _dtc()
         end
@@ -300,7 +348,7 @@ end
 
 local function _check_timing_and_env()
     _safe_call(function()
-        if type(getgenv) == "function" and type(typeof) == "function" and typeof(getgenv) == "function" then
+        if type(getgenv) == "function" then
             local c = os.clock
             local w = task and task.wait
             local m = math.sin
@@ -317,7 +365,7 @@ local function _check_timing_and_env()
                     end
                     local t4 = c()
                     local d = t4 - t3
-                    if d <= 0.0001 or (type(_root) == "table" and typeof(_root.math) ~= "table") then
+                    if d <= 0.0001 or (type(_root) == "table" and _root.math ~= nil and type(_root.math) ~= "table") then
                         _dtc()
                     end
                 end
@@ -337,13 +385,18 @@ _safe_call(_check_timing_and_env)
 '''
 
 
-def randomName() -> str:
-    return (
-        "_"
-        + random.choice("abcdefghijklmnopqrstuvwxyz")
-        + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3)))
-        + str(random.randint(0, 99))
-    )
+def randomName(used_names: set[str] | None = None) -> str:
+    while True:
+        cand = (
+            "_"
+            + random.choice("abcdefghijklmnopqrstuvwxyz")
+            + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3)))
+            + str(random.randint(0, 99))
+        )
+        if not used_names or cand not in used_names:
+            if used_names is not None:
+                used_names.add(cand)
+            return cand
 
 
 def generate_opaque_predicate() -> str:
@@ -393,13 +446,16 @@ def _tokenize_lua(code: str):
         elif c in '"\'':
             quote = c
             j = i + 1
-            while j < n and code[j] != quote:
+            while j < n:
                 if code[j] == "\\":
                     j += 2
                     continue
+                if code[j] == quote:
+                    break
                 j += 1
-            tokens.append(("str", code[i:j + 1]))
-            i = j + 1
+            end_idx = min(j + 1, n)
+            tokens.append(("str", code[i:end_idx]))
+            i = end_idx
         elif c == "[":
             m = re.match(r'\[(=*)\[', code[i:])
             if m:
@@ -469,11 +525,7 @@ def obfuscate_identifiers(code: str) -> str:
 
     mapping = {}
     for v in sorted(local_vars):
-        cand = randomName()
-        while cand in used_names:
-            cand = randomName()
-        used_names.add(cand)
-        mapping[v] = cand
+        mapping[v] = randomName(used_names)
 
     if not mapping:
         return code
@@ -514,14 +566,18 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfus
                 out.append(val)
                 continue
 
-            if len(val) >= 2 and val[0] in ('"', "'") and val[-1] == val[0]:
-                inner = bytes(val[1:-1], "utf-8").decode("unicode_escape")
-                if 0 < len(inner) <= 96:
-                    out.append(encode_lua_string(inner))
-                    continue
+            decoded = _decode_lua_string_literal(val)
+            if decoded is not None and 0 < len(decoded) <= 128:
+                out.append(encode_lua_string(decoded))
+                continue
             out.append(val)
         elif kind == "num" and obfuscate_nums:
-            if "." not in val and val.isdigit():
+            prev_tok = ""
+            for p_idx in range(idx - 1, -1, -1):
+                if tokens[p_idx][0] not in ("ws", "comment"):
+                    prev_tok = tokens[p_idx][1]
+                    break
+            if "." not in val and val.isdigit() and prev_tok not in (".", ":"):
                 n = int(val)
                 if 0 <= n <= 5000:
                     out.append(obfuscate_number(n))
@@ -539,6 +595,8 @@ def minify_payload(code: str) -> str:
     tokens = _tokenize_lua(code)
     meaningful = [(k, v) for (k, v) in tokens if k not in ("ws", "comment")]
 
+    block_keywords = {"local", "function", "return", "then", "do", "else", "elseif", "end", "until", "in"}
+
     out = []
     for idx, (kind, tok) in enumerate(meaningful):
         out.append(tok)
@@ -547,7 +605,7 @@ def minify_payload(code: str) -> str:
             left_word = tok[-1].isalnum() or tok[-1] == "_"
             right_word = nxt[0].isalnum() or nxt[0] == "_"
             if (left_word and right_word) or (
-                tok in ("end", "then", "do", "else", "break", "return")
+                tok in block_keywords
                 and nxt not in (";", ",", ")", "]", "}")
             ):
                 out.append(" ")
@@ -643,7 +701,7 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"_ti({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
         f"elseif {v_op}=={v_ka}[{v_et}] then break end "
         f"{v_gh}={v_gh}+1 end "
-        f"local _src=_tc({v_ty}) {v_ty}=nil "
+        f"local _src=(type(table)=='table' and type(table.concat)=='function')and table.concat({v_ty},' ')or _tc({v_ty}) {v_ty}=nil "
     )
 
     ls_chars = ",".join(str(ord(c)) for c in "loadstring")
@@ -656,7 +714,10 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"or (_T(load)=='function' and load)or nil "
         f"if _T(_fn)=='function' then "
         f"local _ok,_chunk=pcall(_fn,_src) "
-        f"if _ok and _T(_chunk)=='function' then pcall(_chunk) end "
+        f"if _ok and _T(_chunk)=='function' then "
+        f"local _runOk,_runErr=pcall(_chunk) "
+        f"if not _runOk and type(warn)=='function' then warn('[MOONSLOT RUN ERR]: '..tostring(_runErr)) end "
+        f"elseif not _ok and type(warn)=='function' then warn('[MOONSLOT LOAD ERR]: '..tostring(_chunk)) end "
         f"end "
         f"end "
     )
