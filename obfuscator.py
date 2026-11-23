@@ -681,19 +681,28 @@ def validate_generated_lua(lua_code: str) -> None:
 
 
 def wrap_final_code(code: str, pool_tags) -> str:
-    """Envuelve el código final con checks de los 8 pools en _RT y variables polimórficas."""
+    """Envuelve el código final inicializando los pools en la raíz antes de validar."""
     v_fn = randomName()
     v_runner = randomName()
     v_guard = randomName()
+    v_init = randomName()
     v_chk = randomName()
     v_root_ref = randomName()
 
+    pool_init = " ".join(
+        f"{v_root_ref}[{lua_quote(tag)}]=true "
+        for tag in pool_tags
+    )
     pool_checks = " ".join(
         f"if {v_root_ref}[{lua_quote(tag)}]~=true then if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end end "
         for tag in pool_tags
     )
 
-    aggressive_check = (
+    init_and_check = (
+        f"local function {v_init}() "
+        f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
+        f"if type({v_root_ref})=='table' then {pool_init} end "
+        f"end "
         f"local function {v_chk}() "
         f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
         f"if type({v_root_ref})~='table' then "
@@ -717,10 +726,11 @@ def wrap_final_code(code: str, pool_tags) -> str:
 
     wrapper = (
         f"local {v_guard}=false "
-        f"{aggressive_check}"
+        f"{init_and_check}"
         f"local function {v_fn}() "
         f"if {v_guard} then return end "
         f"{v_guard}=true "
+        f"{v_init}() "
         f"{v_chk}() "
         f"{code} "
         f"end "
