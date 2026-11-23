@@ -5,8 +5,7 @@ import argparse
 HEADER = '''--[[
   Protected by Moonslot - Extreme Obfuscation
   Unauthorized reproduction or distribution is prohibited.
-]]
-'''
+]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
@@ -14,31 +13,16 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 PARAM_LIST = ["o", "T", "l", "I", "q", "U", "Q", "K", "F", "z", "w", "y", "Z", "i", "L", "c", "r", "H", "h", "s"]
 
-ASCII_PRINTABLE = [chr(c) for c in range(32, 127) if chr(c) not in ('"', '\\')]
-
-
 def hidden_alert_call() -> str:
     return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
-
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
     return f"[pool.a.d.d._{suffix}]"
 
-
 def lua_quote(s: str) -> str:
     escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
     return f'"{escaped}"'
-
-
-def to_ascii_bytes_chunk(chunk: str) -> str:
-    codes = ",".join(str(ord(ch) & 0xFF) for ch in chunk)
-    return f"_ch({codes})"
-
-
-def random_ascii_decoy(length: int = 8) -> str:
-    return "".join(random.choice(ASCII_PRINTABLE) for _ in range(length))
-
 
 BOOTSTRAP_HELPERS = (
     "local _T=type "
@@ -287,15 +271,12 @@ _safe_call(_check_debug_constants_and_hooks)
 _safe_call(_check_timing_and_env)
 '''
 
-
 def randomName() -> str:
-    return (
-        "_"
-        + random.choice("abcdefghijklmnopqrstuvwxyz")
-        + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3)))
-        + str(random.randint(0, 99))
-    )
+    return "_" + random.choice("abcdefghijklmnopqrstuvwxyz") + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3))) + str(random.randint(0, 99))
 
+def generate_opaque_predicate() -> str:
+    r = random.randint(1, 99)
+    return f"(_bx({r},{r})==0)"
 
 def _tokenize_lua(code: str):
     tokens = []
@@ -310,7 +291,7 @@ def _tokenize_lua(code: str):
                     j += 2
                     continue
                 j += 1
-            tokens.append(("str", code[i:j + 1]))
+            tokens.append(("str", code[i:j+1]))
             i = j + 1
         elif c == '[':
             m = re.match(r'\[(=*)\[', code[i:])
@@ -319,7 +300,7 @@ def _tokenize_lua(code: str):
                 close = ']' + eq + ']'
                 j = code.find(close, i + len(m.group(0)))
                 if j != -1:
-                    tokens.append(("str", code[i:j + len(close)]))
+                    tokens.append(("str", code[i:j+len(close)]))
                     i = j + len(close)
                     continue
             tokens.append(("sym", c))
@@ -337,7 +318,6 @@ def _tokenize_lua(code: str):
             tokens.append(("sym", c))
             i += 1
     return tokens
-
 
 def obfuscate_identifiers(code: str) -> str:
     keywords = {
@@ -395,7 +375,6 @@ def obfuscate_identifiers(code: str) -> str:
         out.append(val)
     return "".join(out)
 
-
 def minify_payload(code: str) -> str:
     code = re.sub(r'--\[\[.*?\]\]', '', code, flags=re.DOTALL)
     code = re.sub(r'--[^\n]*', '', code)
@@ -416,7 +395,6 @@ def minify_payload(code: str) -> str:
                 out.append(' ')
     return ''.join(out).strip()
 
-
 def getExtraProtections(pool_tags) -> str:
     sample_tags = pool_tags[:4] if len(pool_tags) > 4 else pool_tags
     checks = "\n".join(
@@ -435,22 +413,36 @@ if type(pcall) == "function" then
 end
 """
 
+def build22kBlock(pool_tags) -> str:
+    tbl = randomName()
+    soup = [f"local {tbl}={{}}"]
+    target_chars = 2880
+    while len("".join(soup)) < target_chars:
+        tag = lua_quote(random.choice(pool_tags))
+        v = randomName()
+        k_idx = random.randint(1, 9999)
+        sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
+        pred = generate_opaque_predicate()
+        guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
+        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
+    soup.append(f"{tbl}=nil ")
+    return "".join(soup)
 
-def buildMainTableVM(payloadStr: str, pool_tags) -> str:
+def buildVMBlock(payloadStr: str, pool_tags) -> str:
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
     op_chunk = random.randint(10, 80)
     op_nop = random.randint(81, 160)
     op_end = random.randint(161, 240)
 
-    chunk_size = 24
+    chunk_size = 48
     parts = [payloadStr[i:i + chunk_size] for i in range(0, len(payloadStr), chunk_size)]
 
     inst = []
     for part in parts:
         if random.random() < 0.12:
-            inst.append(f"{{{v_mn},{lua_quote(random_ascii_decoy(6))}}}")
-        inst.append(f"{{{v_dr},{to_ascii_bytes_chunk(part)}}}")
+            inst.append(f"{{{v_mn},0}}")
+        inst.append(f"{{{v_dr},{lua_quote(part)}}}")
     inst.append(f"{{{v_et},0}}")
 
     POOL_REF = randomName()
@@ -493,7 +485,6 @@ def buildMainTableVM(payloadStr: str, pool_tags) -> str:
     )
     return vm
 
-
 def buildParamWrapper(inner_lua: str) -> str:
     params_str = ",".join(PARAM_LIST)
     subset = PARAM_LIST[7:]
@@ -507,12 +498,9 @@ def buildParamWrapper(inner_lua: str) -> str:
     return (
         f"return(function({params_str})"
         f"local {rev_lhs}={rhs_str} "
-        f"local _run=function(){inner_lua} end "
-        f"if _T(K)=='function'then return K(_run)end "
-        f"return _run() "
+        f"if _T(K)=='function'then K(function(){inner_lua} end)else {inner_lua} end "
         f"end)(...)"
     )
-
 
 def validate_generated_lua(lua_code: str) -> None:
     tokens = _tokenize_lua(lua_code)
@@ -521,23 +509,16 @@ def validate_generated_lua(lua_code: str) -> None:
     depth_brace = 0
     for kind, val in tokens:
         if kind == "sym":
-            if val == "(":
-                depth_paren += 1
-            elif val == ")":
-                depth_paren -= 1
-            elif val == "[":
-                depth_bracket += 1
-            elif val == "]":
-                depth_bracket -= 1
-            elif val == "{":
-                depth_brace += 1
-            elif val == "}":
-                depth_brace -= 1
+            if val == "(": depth_paren += 1
+            elif val == ")": depth_paren -= 1
+            elif val == "[": depth_bracket += 1
+            elif val == "]": depth_bracket -= 1
+            elif val == "{": depth_brace += 1
+            elif val == "}": depth_brace -= 1
     if depth_paren != 0 or depth_bracket != 0 or depth_brace != 0:
         raise ValueError(f"Unbalanced delimiters: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}")
 
-
-def obfuscate(sourceCode: str, seed: int = 0) -> str:
+def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
@@ -555,16 +536,19 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
 
     at_core = minify_payload(ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua))
     extra_prots = minify_payload(getExtraProtections(pool_tags))
+    filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
 
-    combined_payload = f"{extra_prots} {at_core} {obfuscated_user_code}"
-    main_vm = buildMainTableVM(combined_payload, pool_tags)
+    vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags)
+    vm_user = buildVMBlock(obfuscated_user_code, pool_tags)
 
     core_body = (
         f"{BOOTSTRAP_HELPERS}"
         f"local _mc={{}}for i=1,360 do _mc[i]=_rp('X',24)end _mc=nil "
         f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
         f"{reg_pools} "
-        f"{main_vm}"
+        f"{filler_22k}"
+        f"{vm_prot} "
+        f"{vm_user}"
     )
 
     wrapped_code = buildParamWrapper(minify_payload(core_body))
@@ -572,25 +556,24 @@ def obfuscate(sourceCode: str, seed: int = 0) -> str:
     validate_generated_lua(result)
     return result
 
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--repeat-22k', type=int, default=2)
 
     args, _ = ap.parse_known_args()
 
     try:
         with open(args.input, encoding='utf-8') as f:
             src = f.read()
-        out = obfuscate(src, seed=args.seed)
+        out = obfuscate(src, seed=args.seed, repeat_22k=args.repeat_22k)
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(out)
     except Exception as e:
         print(f"Error interno: {e}")
         exit(1)
-
 
 if __name__ == '__main__':
     main()
