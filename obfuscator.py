@@ -11,6 +11,7 @@ ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
+POOL_COUNT = 8
 
 
 def hidden_alert_call() -> str:
@@ -19,7 +20,7 @@ def hidden_alert_call() -> str:
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
-    return f"[pool.a.d.d._{suffix}]"
+    return f"[pool.a.d.d.{suffix}]"
 
 
 def lua_quote(s: str) -> str:
@@ -118,11 +119,11 @@ local function _dtc()
 end
 
 local function _check_pools()
-    if type(_root) ~= "table" or type(_pool_list) ~= "table" or #_pool_list == 0 then
+    if type(_root) ~= "table" or type(_pool_list) ~= "table" or #_pool_list < 8 then
         _dtc()
     end
     for _, key in ipairs(_pool_list) do
-        if _root[key] == nil then
+        if _root[key] ~= true then
             _dtc()
         end
     end
@@ -352,7 +353,7 @@ def build22kBlock(pool_tags) -> str:
         k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         pred = generate_opaque_predicate()
-        guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
+        guarded = f"if _T(_RT)=='table' and _RT[{tag}]~=true then _tampered=true {hidden_alert_call()} end "
         soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
     soup.append(f"{tbl}=nil ")
     return "".join(soup)
@@ -578,10 +579,9 @@ def flatten_control_flow(statements: list[str]) -> str:
 
 
 def getExtraProtections(pool_tags) -> str:
-    sample_tags = pool_tags[:4] if len(pool_tags) > 4 else pool_tags
     checks = "\n".join(
         f'    if type(_RT) == "table" and _RT[{lua_quote(tag)}] ~= true then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
-        for tag in sample_tags
+        for tag in pool_tags
     )
     return f"""
 if type(pcall) == "function" then
@@ -680,17 +680,48 @@ def validate_generated_lua(lua_code: str) -> None:
         )
 
 
-def wrap_final_code(code: str) -> str:
-    """Envuelve el código final en una función con variables polimórficas por ejecución."""
+def wrap_final_code(code: str, pool_tags) -> str:
+    """Envuelve el código final con checks de los 8 pools en _RT y variables polimórficas."""
     v_fn = randomName()
     v_runner = randomName()
     v_guard = randomName()
+    v_chk = randomName()
+    v_root_ref = randomName()
+
+    pool_checks = " ".join(
+        f"if {v_root_ref}[{lua_quote(tag)}]~=true then if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end end "
+        for tag in pool_tags
+    )
+
+    aggressive_check = (
+        f"local function {v_chk}() "
+        f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
+        f"if type({v_root_ref})~='table' then "
+        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end "
+        f"end "
+        f"{pool_checks}"
+        f"if type(debug)=='table' and type(debug.gethook)=='function' then "
+        f"local _ok,_hk=pcall(debug.gethook) "
+        f"if _ok and _hk~=nil then "
+        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end "
+        f"end "
+        f"end "
+        f"if type(print)=='function' and type(tostring)=='function' then "
+        f"local _ps=tostring(print) "
+        f"if type(_ps)=='string' and _ps:match('^function: 0x0000') then "
+        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end "
+        f"end "
+        f"end "
+        f"end "
+    )
 
     wrapper = (
         f"local {v_guard}=false "
+        f"{aggressive_check}"
         f"local function {v_fn}() "
         f"if {v_guard} then return end "
         f"{v_guard}=true "
+        f"{v_chk}() "
         f"{code} "
         f"end "
         f"local {v_runner}=function() return {v_fn}() end "
@@ -704,8 +735,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         return "--ERROR"
     random.seed(seed)
 
-    pool_count = 22
-    pool_tags = [generate_pool_tag() for _ in range(pool_count)]
+    pool_tags = [generate_pool_tag() for _ in range(POOL_COUNT)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
 
     minified_user_code = minify_payload(sourceCode)
@@ -737,7 +767,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         f"{vm_user}"
     )
 
-    wrapped_code = wrap_final_code(minify_payload(final_code))
+    wrapped_code = wrap_final_code(minify_payload(final_code), pool_tags)
     result = HEADER + wrapped_code
     validate_generated_lua(result)
     return result
