@@ -2,9 +2,7 @@ import re
 import random
 import argparse
 
-HEADER = '''--[[
-  Protected by Moonslot - Extreme Obfuscation
-  Unauthorized reproduction or distribution is prohibited.
+HEADER = '''--[[ This code is protected by moonslot 1.01v if you want protect your code whit real obfuscation go to https://discord.gg/ZMnTeuTZ5
 ]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
