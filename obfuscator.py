@@ -12,22 +12,64 @@ ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,1
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 
+
 def hidden_alert_call() -> str:
     return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
+
 
 def generate_pool_tag() -> str:
     suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
     return f"[pool.a.d.d._{suffix}]"
 
+
 def lua_quote(s: str) -> str:
-    escaped = s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
+    escaped = (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "")
+    )
     return f'"{escaped}"'
+
+
+def encode_lua_string(s: str) -> str:
+    """Codifica una cadena en bytes decimales con clave XOR aleatoria y decodificador en tiempo de ejecución."""
+    raw = s.encode("utf-8")
+    if not raw:
+        return "''"
+    key = random.randint(17, 239)
+    encoded_bytes = ",".join(str(b ^ key) for b in raw)
+    return f"(function()local _s=''for _,_b in ipairs({{{encoded_bytes}}})do _s=_s.._ch(_bx(_b,{key}))end return _s end)()"
+
+
+def obfuscate_number(n: int) -> str:
+    """Reemplaza un literal numérico entero por una expresión aritmética ofuscada."""
+    mode = random.randint(0, 3)
+    if mode == 0:
+        a = random.randint(10, 999)
+        b = a - n
+        return f"({a}-{b})"
+    elif mode == 1:
+        k = random.randint(2, 9)
+        rem = n % k
+        q = (n - rem) // k
+        if rem == 0:
+            return f"({q}*{k})"
+        return f"({q}*{k}+{rem})"
+    elif mode == 2:
+        delta = random.randint(1, 250)
+        return f"({n + delta}-{delta})"
+    else:
+        x = random.randint(1, 120)
+        return f"(_bx({n ^ x},{x}))"
+
 
 BOOTSTRAP_HELPERS = (
     "local _T=type "
     "local _bx=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
     "local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
     "local _ch=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return''end "
+    "local _by=(type(string)=='table'and type(string.byte)=='function')and string.byte or function(s,i)return 0 end "
     "local _rp=(type(string)=='table'and type(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..s end return o end "
     "local _tc=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or''end "
     "local _ti=(type(table)=='table'and type(table.insert)=='function')and table.insert or function(t,v)t[#t+1]=v end "
@@ -35,6 +77,18 @@ BOOTSTRAP_HELPERS = (
     "local _rn=(type(math)=='table'and type(math.random)=='function')and math.random or function(a,b)return a or 0 end "
     "local _er=type(error)=='function'and error or function()end "
     "local _RT=(getgenv and _T(getgenv)=='function')and getgenv()or _G "
+    "local _b64d=function(data)"
+    "local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'"
+    "data=string.gsub(data,'[^'..b..'=]','')"
+    "return(data:gsub('.',function(x)"
+    "if x=='=' then return''end "
+    "local r,f='',(b:find(x,1,true)-1)"
+    "for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0')end return r "
+    "end):gsub('%d%d%d?%d?%d?%d?%d?%d?',function(x)"
+    "if #x~=8 then return''end "
+    "local c=0 for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0)end return _ch(c)end))"
+    "end "
+    "local _DT={} "
 )
 
 ANTI_TAMPER_CORE = r'''
@@ -55,6 +109,9 @@ end
 
 local function _dtc()
     _tampered = true
+    if type(_root) == "table" then
+        _root._tampered = true
+    end
     if type(error) == "function" then
         error(_msg, 0)
     end
@@ -270,36 +327,78 @@ _safe_call(_check_debug_constants_and_hooks)
 _safe_call(_check_timing_and_env)
 '''
 
+
 def randomName() -> str:
-    return "_" + random.choice("abcdefghijklmnopqrstuvwxyz") + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3))) + str(random.randint(0, 99))
+    return (
+        "_"
+        + random.choice("abcdefghijklmnopqrstuvwxyz")
+        + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3)))
+        + str(random.randint(0, 99))
+    )
+
 
 def generate_opaque_predicate() -> str:
     r = random.randint(1, 99)
     return f"(_bx({r},{r})==0)"
+
+
+def build22kBlock(pool_tags) -> str:
+    tbl = randomName()
+    soup = [f"local {tbl}={{}}"]
+    target_chars = 2880
+    while len("".join(soup)) < target_chars:
+        tag = lua_quote(random.choice(pool_tags))
+        v = randomName()
+        k_idx = random.randint(1, 9999)
+        sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
+        pred = generate_opaque_predicate()
+        guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
+        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
+    soup.append(f"{tbl}=nil ")
+    return "".join(soup)
+
 
 def _tokenize_lua(code: str):
     tokens = []
     i, n = 0, len(code)
     while i < n:
         c = code[i]
-        if c in '"\'':
+        if c == "-" and i + 1 < n and code[i + 1] == "-":
+            if i + 3 < n and code[i + 2] == "[":
+                m = re.match(r'--\[(=*)\[', code[i:])
+                if m:
+                    eq = m.group(1)
+                    close = "]" + eq + "]"
+                    j = code.find(close, i + len(m.group(0)))
+                    if j != -1:
+                        tokens.append(("comment", code[i:j + len(close)]))
+                        i = j + len(close)
+                        continue
+            j = code.find("\n", i)
+            if j == -1:
+                tokens.append(("comment", code[i:]))
+                i = n
+            else:
+                tokens.append(("comment", code[i:j]))
+                i = j
+        elif c in '"\'':
             quote = c
             j = i + 1
             while j < n and code[j] != quote:
-                if code[j] == '\\':
+                if code[j] == "\\":
                     j += 2
                     continue
                 j += 1
-            tokens.append(("str", code[i:j+1]))
+            tokens.append(("str", code[i:j + 1]))
             i = j + 1
-        elif c == '[':
+        elif c == "[":
             m = re.match(r'\[(=*)\[', code[i:])
             if m:
                 eq = m.group(1)
-                close = ']' + eq + ']'
+                close = "]" + eq + "]"
                 j = code.find(close, i + len(m.group(0)))
                 if j != -1:
-                    tokens.append(("str", code[i:j+len(close)]))
+                    tokens.append(("str", code[i:j + len(close)]))
                     i = j + len(close)
                     continue
             tokens.append(("sym", c))
@@ -307,9 +406,18 @@ def _tokenize_lua(code: str):
         elif c.isspace():
             tokens.append(("ws", c))
             i += 1
-        elif c.isalnum() or c == '_':
+        elif c.isdigit():
             j = i
-            while j < n and (code[j].isalnum() or code[j] == '_'):
+            has_dot = False
+            while j < n and (code[j].isdigit() or (code[j] == "." and not has_dot and j + 1 < n and code[j + 1].isdigit())):
+                if code[j] == ".":
+                    has_dot = True
+                j += 1
+            tokens.append(("num", code[i:j]))
+            i = j
+        elif c.isalnum() or c == "_":
+            j = i
+            while j < n and (code[j].isalnum() or code[j] == "_"):
                 j += 1
             tokens.append(("ident", code[i:j]))
             i = j
@@ -318,16 +426,18 @@ def _tokenize_lua(code: str):
             i += 1
     return tokens
 
+
 def obfuscate_identifiers(code: str) -> str:
     keywords = {
-        'and', 'break', 'do', 'else', 'elseif', 'end', 'false', 'for', 'function',
-        'if', 'in', 'local', 'nil', 'not', 'or', 'repeat', 'return', 'then', 'true',
-        'until', 'while', 'pcall', 'type', 'math', 'string', 'table', 'bit32',
-        'game', 'task', 'loadstring', 'load', 'getfenv', 'getgenv', 'setfenv', 'debug',
-        'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
-        'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
-        'clonefunction', 'hookfunction', 'collectgarbage', 'gethui', 'UDim2', 'Color3',
-        '_G', '_RT', '_tampered', 'Spy', '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
+        "and", "break", "do", "else", "elseif", "end", "false", "for", "function",
+        "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
+        "until", "while", "pcall", "type", "math", "string", "table", "bit32",
+        "game", "task", "loadstring", "load", "getfenv", "getgenv", "setfenv", "debug",
+        "ipairs", "pairs", "next", "tostring", "rawget", "rawset", "setmetatable",
+        "getmetatable", "typeof", "coroutine", "buffer", "os", "Instance", "workspace",
+        "clonefunction", "hookfunction", "collectgarbage", "gethui", "UDim2", "Color3",
+        "_G", "_RT", "_DT", "_b64d", "_tampered", "Spy",
+        "_T", "_bx", "_ch", "_by", "_rp", "_tc", "_ti", "_fl", "_rn", "_er",
     }
     keywords.update(OPCODE_VARS)
     tokens = _tokenize_lua(code)
@@ -364,7 +474,7 @@ def obfuscate_identifiers(code: str) -> str:
         if kind == "ident" and val in mapping:
             prev_sym = ""
             for p in range(idx - 1, -1, -1):
-                if tokens[p][0] != "ws":
+                if tokens[p][0] not in ("ws", "comment"):
                     prev_sym = tokens[p][1]
                     break
             if prev_sym not in (".", ":"):
@@ -373,25 +483,99 @@ def obfuscate_identifiers(code: str) -> str:
         out.append(val)
     return "".join(out)
 
+
+def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfuscate_nums: bool = True) -> str:
+    """Cifra cadenas literales (excepto claves de tabla directas) y ofusca constantes numéricas enteras."""
+    tokens = _tokenize_lua(code)
+    out = []
+    for idx, (kind, val) in enumerate(tokens):
+        if kind == "str" and encrypt_strings:
+            next_tok = ""
+            for n_idx in range(idx + 1, len(tokens)):
+                if tokens[n_idx][0] not in ("ws", "comment"):
+                    next_tok = tokens[n_idx][1]
+                    break
+            prev_tok = ""
+            for p_idx in range(idx - 1, -1, -1):
+                if tokens[p_idx][0] not in ("ws", "comment"):
+                    prev_tok = tokens[p_idx][1]
+                    break
+
+            if prev_tok == "[" and next_tok == "]":
+                out.append(val)
+                continue
+
+            if len(val) >= 2 and val[0] in ('"', "'") and val[-1] == val[0]:
+                inner = bytes(val[1:-1], "utf-8").decode("unicode_escape")
+                if 0 < len(inner) <= 96:
+                    out.append(encode_lua_string(inner))
+                    continue
+            out.append(val)
+        elif kind == "num" and obfuscate_nums:
+            if "." not in val and val.isdigit():
+                n = int(val)
+                if 0 <= n <= 5000:
+                    out.append(obfuscate_number(n))
+                    continue
+            out.append(val)
+        else:
+            out.append(val)
+    return "".join(out)
+
+
 def minify_payload(code: str) -> str:
-    code = re.sub(r'--\[\[.*?\]\]', '', code, flags=re.DOTALL)
-    code = re.sub(r'--[^\n]*', '', code)
+    code = re.sub(r"--\[\[.*?\]\]", "", code, flags=re.DOTALL)
+    code = re.sub(r"--[^\n]*", "", code)
 
     tokens = _tokenize_lua(code)
-    meaningful = [(k, v) for (k, v) in tokens if k != "ws"]
+    meaningful = [(k, v) for (k, v) in tokens if k not in ("ws", "comment")]
 
     out = []
     for idx, (kind, tok) in enumerate(meaningful):
         out.append(tok)
         if idx < len(meaningful) - 1:
             _, nxt = meaningful[idx + 1]
-            left_word = tok[-1].isalnum() or tok[-1] == '_'
-            right_word = nxt[0].isalnum() or nxt[0] == '_'
+            left_word = tok[-1].isalnum() or tok[-1] == "_"
+            right_word = nxt[0].isalnum() or nxt[0] == "_"
             if (left_word and right_word) or (
-                tok in ("end", "then", "do", "else", "break", "return") and nxt not in (";", ",", ")", "]", "}")
+                tok in ("end", "then", "do", "else", "break", "return")
+                and nxt not in (";", ",", ")", "]", "}")
             ):
-                out.append(' ')
-    return ''.join(out).strip()
+                out.append(" ")
+    return "".join(out).strip()
+
+
+def flatten_control_flow(statements: list[str]) -> str:
+    """Envuelve una lista de sentencias en una máquina de estados con while y dispatch table."""
+    if not statements:
+        return ""
+    state_var = randomName()
+    dispatch_tbl = randomName()
+    states = [random.randint(1000, 99999) for _ in range(len(statements) + 1)]
+    shuffled_indices = list(range(len(statements)))
+    random.shuffle(shuffled_indices)
+
+    end_state = states[-1]
+    state_to_next = {}
+    for pos, stmt_idx in enumerate(shuffled_indices):
+        cur_s = states[pos]
+        nxt_s = states[pos + 1] if pos + 1 < len(shuffled_indices) else end_state
+        state_to_next[cur_s] = (statements[stmt_idx], nxt_s)
+
+    init_state = states[0]
+    entries = []
+    for s_id, (stmt, nxt_id) in state_to_next.items():
+        entries.append(f"[{s_id}]=function() {stmt} {state_var}={nxt_id} end")
+
+    return (
+        f"local {state_var}={init_state} "
+        f"local {dispatch_tbl}={{{','.join(entries)}}} "
+        f"while {state_var}~={end_state} do "
+        f"local _fn={dispatch_tbl}[{state_var}] "
+        f"if _T(_fn)=='function' then _fn() else {state_var}={end_state} end "
+        f"end "
+    )
+
 
 def getExtraProtections(pool_tags) -> str:
     sample_tags = pool_tags[:4] if len(pool_tags) > 4 else pool_tags
@@ -411,23 +595,9 @@ if type(pcall) == "function" then
 end
 """
 
-def build22kBlock(pool_tags) -> str:
-    tbl = randomName()
-    soup = [f"local {tbl}={{}}"]
-    target_chars = 2880
-    while len("".join(soup)) < target_chars:
-        tag = lua_quote(random.choice(pool_tags))
-        v = randomName()
-        k_idx = random.randint(1, 9999)
-        sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
-        pred = generate_opaque_predicate()
-        guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
-        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
-    soup.append(f"{tbl}=nil ")
-    return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
-    # Variables de opcode y registros explícitos: dr, mn, et, gh, ty, ui, op, vu, bn, jg, ka, yh
+    """Bucle principal de ejecución de instrucciones de la VM con despacho de opcodes."""
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
     op_chunk = random.randint(10, 80)
@@ -484,6 +654,7 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
     )
     return vm
 
+
 def validate_generated_lua(lua_code: str) -> None:
     tokens = _tokenize_lua(lua_code)
     depth_paren = 0
@@ -491,34 +662,48 @@ def validate_generated_lua(lua_code: str) -> None:
     depth_brace = 0
     for kind, val in tokens:
         if kind == "sym":
-            if val == "(": depth_paren += 1
-            elif val == ")": depth_paren -= 1
-            elif val == "[": depth_bracket += 1
-            elif val == "]": depth_bracket -= 1
-            elif val == "{": depth_brace += 1
-            elif val == "}": depth_brace -= 1
+            if val == "(":
+                depth_paren += 1
+            elif val == ")":
+                depth_paren -= 1
+            elif val == "[":
+                depth_bracket += 1
+            elif val == "]":
+                depth_bracket -= 1
+            elif val == "{":
+                depth_brace += 1
+            elif val == "}":
+                depth_brace -= 1
     if depth_paren != 0 or depth_bracket != 0 or depth_brace != 0:
-        raise ValueError(f"Unbalanced delimiters: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}")
+        raise ValueError(
+            f"Unbalanced delimiters: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}"
+        )
+
 
 def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     if not sourceCode:
-        return '--ERROR'
+        return "--ERROR"
     random.seed(seed)
 
     pool_count = 22
     pool_tags = [generate_pool_tag() for _ in range(pool_count)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
-    reg_pools = " ".join(
-        f"if _T(_RT)=='table'then _RT[{lua_quote(tag)}]=true end"
-        for tag in pool_tags
-    )
 
     minified_user_code = minify_payload(sourceCode)
     obfuscated_user_code = obfuscate_identifiers(minified_user_code)
+    obfuscated_user_code = obfuscate_strings_and_numbers(
+        obfuscated_user_code, encrypt_strings=True, obfuscate_nums=True
+    )
 
     at_core = minify_payload(ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua))
     extra_prots = minify_payload(getExtraProtections(pool_tags))
     filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
+
+    reg_statements = [
+        f"if _T(_RT)=='table'then _RT[{lua_quote(tag)}]=true end"
+        for tag in pool_tags
+    ]
+    flattened_reg = flatten_control_flow(reg_statements)
 
     vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags)
     vm_user = buildVMBlock(obfuscated_user_code, pool_tags)
@@ -527,7 +712,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         f"{BOOTSTRAP_HELPERS}"
         f"local _mc={{}}for i=1,360 do _mc[i]=_rp('X',24)end _mc=nil "
         f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
-        f"{reg_pools} "
+        f"{flattened_reg} "
         f"{filler_22k}"
         f"{vm_prot} "
         f"{vm_user}"
@@ -537,24 +722,26 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     validate_generated_lua(result)
     return result
 
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('input')
-    ap.add_argument('-o', '--output', default='obfuscated.lua')
-    ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--repeat-22k', type=int, default=2)
+    ap.add_argument("input")
+    ap.add_argument("-o", "--output", default="obfuscated.lua")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--repeat-22k", type=int, default=2)
 
     args, _ = ap.parse_known_args()
 
     try:
-        with open(args.input, encoding='utf-8') as f:
+        with open(args.input, encoding="utf-8") as f:
             src = f.read()
         out = obfuscate(src, seed=args.seed, repeat_22k=args.repeat_22k)
-        with open(args.output, 'w', encoding='utf-8') as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             f.write(out)
     except Exception as e:
         print(f"Error interno: {e}")
         exit(1)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
