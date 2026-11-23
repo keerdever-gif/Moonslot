@@ -414,18 +414,15 @@ end
 """
 
 def build22kBlock(pool_tags) -> str:
-    tbl = randomName()
-    soup = [f"local {tbl}={{}}"]
+    soup = []
     target_chars = 2880
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
         v = randomName()
-        k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         pred = generate_opaque_predicate()
         guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
-        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
-    soup.append(f"{tbl}=nil ")
+        soup.append(f"if {pred} then {guarded}local {v}='{sval}' end ")
     return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
