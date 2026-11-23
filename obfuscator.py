@@ -701,7 +701,7 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"_ti({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
         f"elseif {v_op}=={v_ka}[{v_et}] then break end "
         f"{v_gh}={v_gh}+1 end "
-        f"local _src=(type(table)=='table' and type(table.concat)=='function')and table.concat({v_ty},' ')or _tc({v_ty}) {v_ty}=nil "
+        f"local _src=_tc({v_ty}) {v_ty}=nil "
     )
 
     ls_chars = ",".join(str(ord(c)) for c in "loadstring")
