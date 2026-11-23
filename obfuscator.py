@@ -680,6 +680,25 @@ def validate_generated_lua(lua_code: str) -> None:
         )
 
 
+def wrap_final_code(code: str) -> str:
+    """Envuelve el código final en una función con variables polimórficas por ejecución."""
+    v_fn = randomName()
+    v_runner = randomName()
+    v_guard = randomName()
+
+    wrapper = (
+        f"local {v_guard}=false "
+        f"local function {v_fn}() "
+        f"if {v_guard} then return end "
+        f"{v_guard}=true "
+        f"{code} "
+        f"end "
+        f"local {v_runner}=function() return {v_fn}() end "
+        f"{v_runner}()"
+    )
+    return minify_payload(wrapper)
+
+
 def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     if not sourceCode:
         return "--ERROR"
@@ -718,7 +737,8 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         f"{vm_user}"
     )
 
-    result = HEADER + minify_payload(final_code)
+    wrapped_code = wrap_final_code(minify_payload(final_code))
+    result = HEADER + wrapped_code
     validate_generated_lua(result)
     return result
 
