@@ -116,12 +116,22 @@ local function _dtc()
     end
 end
 
+local function _has_pool(key)
+    if type(_root) == "table" and _root[key] == true then
+        return true
+    end
+    if type(_G) == "table" and _G[key] == true then
+        return true
+    end
+    return false
+end
+
 local function _check_pools()
-    if type(_root) ~= "table" or type(_pool_list) ~= "table" or #_pool_list < 8 then
+    if type(_pool_list) ~= "table" or #_pool_list < 8 then
         _dtc()
     end
     for _, key in ipairs(_pool_list) do
-        if _root[key] ~= true then
+        if not _has_pool(key) then
             _dtc()
         end
     end
@@ -134,7 +144,7 @@ local function _check_spy_and_loggers()
         end
         for k, v in pairs(_root) do
             local ks = tostring(k):lower()
-            if type(v) == "function" and (ks:find("spy", 1, true) or ks:find("logger", 1, true) or ks:find("remotespy", 1, true) or ks:find("httplog", 1, true) or ks:find("hook", 1, true) or ks:find("detour", 1, true)) then
+            if type(v) == "function" and (ks:find("spy", 1, true) or ks:find("remotespy", 1, true) or ks:find("httplog", 1, true)) then
                 _dtc()
             end
         end
@@ -578,7 +588,7 @@ def flatten_control_flow(statements: list[str]) -> str:
 
 def getExtraProtections(pool_tags) -> str:
     checks = "\n".join(
-        f'    if type(_RT) == "table" and _RT[{lua_quote(tag)}] ~= true then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
+        f'    if type(_RT) == "table" and _RT[{lua_quote(tag)}] ~= true and (type(_G) ~= "table" or _G[{lua_quote(tag)}] ~= true) then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
         for tag in pool_tags
     )
     return f"""
@@ -679,7 +689,7 @@ def validate_generated_lua(lua_code: str) -> None:
 
 
 def wrap_final_code(code: str, pool_tags) -> str:
-    """Envuelve el código final inicializando los pools en la raíz antes de validar."""
+    """Envuelve el código final sincronizando los 8 pools en _RT y _G antes de validar."""
     v_fn = randomName()
     v_runner = randomName()
     v_guard = randomName()
@@ -688,24 +698,23 @@ def wrap_final_code(code: str, pool_tags) -> str:
     v_root_ref = randomName()
 
     pool_init = " ".join(
-        f"{v_root_ref}[{lua_quote(tag)}]=true "
+        f"if type({v_root_ref})=='table' then {v_root_ref}[{lua_quote(tag)}]=true end "
+        f"if type(_G)=='table' then _G[{lua_quote(tag)}]=true end "
         for tag in pool_tags
     )
     pool_checks = " ".join(
-        f"if {v_root_ref}[{lua_quote(tag)}]~=true then if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end end "
+        f"if (type({v_root_ref})~='table' or {v_root_ref}[{lua_quote(tag)}]~=true) and (type(_G)~='table' or _G[{lua_quote(tag)}]~=true) then "
+        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end end "
         for tag in pool_tags
     )
 
     init_and_check = (
         f"local function {v_init}() "
         f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-        f"if type({v_root_ref})=='table' then {pool_init} end "
+        f"{pool_init}"
         f"end "
         f"local function {v_chk}() "
         f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
-        f"if type({v_root_ref})~='table' then "
-        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end "
-        f"end "
         f"{pool_checks}"
         f"if type(debug)=='table' and type(debug.gethook)=='function' then "
         f"local _ok,_hk=pcall(debug.gethook) "
@@ -757,7 +766,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
 
     reg_statements = [
-        f"if _T(_RT)=='table'then _RT[{lua_quote(tag)}]=true end"
+        f"if _T(_RT)=='table'then _RT[{lua_quote(tag)}]=true end if type(_G)=='table'then _G[{lua_quote(tag)}]=true end"
         for tag in pool_tags
     ]
     flattened_reg = flatten_control_flow(reg_statements)
