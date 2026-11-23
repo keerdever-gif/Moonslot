@@ -11,7 +11,6 @@ ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
-PARAM_LIST = ["o", "T", "l", "I", "q", "U", "Q", "K", "F", "z", "w", "y", "Z", "i", "L", "c", "r", "H", "h", "s"]
 
 def hidden_alert_call() -> str:
     return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
@@ -331,7 +330,6 @@ def obfuscate_identifiers(code: str) -> str:
         '_G', '_RT', '_tampered', 'Spy', '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
     }
     keywords.update(OPCODE_VARS)
-    keywords.update(PARAM_LIST)
     tokens = _tokenize_lua(code)
     local_vars = set()
     used_names = set(keywords)
@@ -414,18 +412,22 @@ end
 """
 
 def build22kBlock(pool_tags) -> str:
-    soup = []
+    tbl = randomName()
+    soup = [f"local {tbl}={{}}"]
     target_chars = 2880
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
         v = randomName()
+        k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         pred = generate_opaque_predicate()
         guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
-        soup.append(f"if {pred} then {guarded}local {v}='{sval}' end ")
+        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
+    soup.append(f"{tbl}=nil ")
     return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
+    # Variables de opcode y registros explícitos: dr, mn, et, gh, ty, ui, op, vu, bn, jg, ka, yh
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
     op_chunk = random.randint(10, 80)
@@ -482,23 +484,6 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
     )
     return vm
 
-def buildParamWrapper(inner_lua: str) -> str:
-    params_str = ",".join(PARAM_LIST)
-    subset = PARAM_LIST[7:]
-    rev_lhs = ",".join(reversed(subset))
-    rhs_items = [
-        "function(a,b)if _T(a)=='function'then return a(b)end return b end",
-        "{}",
-        "function(x)return x end",
-    ] + ["nil"] * (len(subset) - 3)
-    rhs_str = ",".join(rhs_items)
-    return (
-        f"return(function({params_str})"
-        f"local {rev_lhs}={rhs_str} "
-        f"if _T(K)=='function'then K(function(){inner_lua} end)else {inner_lua} end "
-        f"end)(...)"
-    )
-
 def validate_generated_lua(lua_code: str) -> None:
     tokens = _tokenize_lua(lua_code)
     depth_paren = 0
@@ -538,7 +523,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags)
     vm_user = buildVMBlock(obfuscated_user_code, pool_tags)
 
-    core_body = (
+    final_code = (
         f"{BOOTSTRAP_HELPERS}"
         f"local _mc={{}}for i=1,360 do _mc[i]=_rp('X',24)end _mc=nil "
         f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
@@ -548,8 +533,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         f"{vm_user}"
     )
 
-    wrapped_code = buildParamWrapper(minify_payload(core_body))
-    result = HEADER + minify_payload(wrapped_code)
+    result = HEADER + minify_payload(final_code)
     validate_generated_lua(result)
     return result
 
