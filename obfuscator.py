@@ -10,6 +10,7 @@ HEADER = '''--[[
 ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
 ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 
 def hidden_alert_call() -> str:
     return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
@@ -328,6 +329,7 @@ def obfuscate_identifiers(code: str) -> str:
         'clonefunction', 'hookfunction', 'collectgarbage', 'gethui', 'UDim2', 'Color3',
         '_G', '_RT', '_tampered', 'Spy', '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
     }
+    keywords.update(OPCODE_VARS)
     tokens = _tokenize_lua(code)
     local_vars = set()
     used_names = set(keywords)
@@ -425,7 +427,9 @@ def build22kBlock(pool_tags) -> str:
     return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
-    # Opcodes compactos por bloques enlazados con las variables pools (sin 1 par por byte)
+    # Variables de opcode y registros explícitos: dr, mn, et, gh, ty, ui, op, vu, bn, jg, ka, yh
+    v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
+
     op_chunk = random.randint(10, 80)
     op_nop = random.randint(81, 160)
     op_end = random.randint(161, 240)
@@ -436,37 +440,37 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
     inst = []
     for part in parts:
         if random.random() < 0.12:
-            inst.append(f"{{{op_nop},0}}")
-        inst.append(f"{{{op_chunk},{lua_quote(part)}}}")
-    inst.append(f"{{{op_end},0}}")
+            inst.append(f"{{{v_mn},0}}")
+        inst.append(f"{{{v_dr},{lua_quote(part)}}}")
+    inst.append(f"{{{v_et},0}}")
 
-    INST_TBL = randomName()
-    PC = randomName()
-    BUF = randomName()
-    OP_V = randomName()
-    ARG_V = randomName()
     POOL_REF = randomName()
     CHK_TAG = lua_quote(random.choice(pool_tags))
+    OP_MAP = randomName()
 
     vm = (
-        f"local {POOL_REF}=_T(_RT)=='table' and _RT or _G "
-        f"if _T({POOL_REF})=='table' and {POOL_REF}[{CHK_TAG}]==nil then {hidden_alert_call()} end "
-        f"local {INST_TBL}={{{','.join(inst)}}} "
-        f"local {BUF}={{}} local {PC}=1 "
-        f"while {PC}<=#{INST_TBL} do "
-        f"if _T({POOL_REF})=='table' and {POOL_REF}[{CHK_TAG}]~=true then {hidden_alert_call()} break end "
-        f"local _ins={INST_TBL}[{PC}] "
-        f"local {OP_V}, {ARG_V} = _ins[1], _ins[2] "
-        f"if {OP_V}=={op_chunk} then "
-        f"_ti({BUF},{ARG_V}) "
-        f"elseif {OP_V}=={op_end} then break end "
-        f"{PC}={PC}+1 end "
-        f"local _src=_tc({BUF}) {BUF}=nil "
+        f"local {v_dr}={op_chunk} local {v_mn}={op_nop} local {v_et}={op_end} "
+        f"local {v_gh}=1 local {v_ty}={{}} local {v_ui}=0 local {v_op}=0 local {v_vu}=nil "
+        f"local {v_bn}=_T(_RT)=='table' and _RT or _G "
+        f"local {v_jg}={CHK_TAG} "
+        f"local {v_ka}={{[{v_dr}]={v_dr},[{v_mn}]={v_mn},[{v_et}]={v_et}}} "
+        f"local {v_yh}={{{','.join(inst)}}} "
+        f"local {POOL_REF}={v_bn} "
+        f"if _T({POOL_REF})=='table' and {POOL_REF}[{v_jg}]==nil then {hidden_alert_call()} end "
+        f"while {v_gh}<=#{v_yh} do "
+        f"if _T({POOL_REF})=='table' and {POOL_REF}[{v_jg}]~=true then {hidden_alert_call()} break end "
+        f"local {OP_MAP}={v_yh}[{v_gh}] "
+        f"{v_op},{v_vu}={OP_MAP}[1],{OP_MAP}[2] "
+        f"if {v_op}=={v_ka}[{v_dr}] and _T({v_vu})=='string' then "
+        f"_ti({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
+        f"elseif {v_op}=={v_ka}[{v_et}] then break end "
+        f"{v_gh}={v_gh}+1 end "
+        f"local _src=_tc({v_ty}) {v_ty}=nil "
     )
 
     ls_chars = ",".join(str(ord(c)) for c in "loadstring")
     vm += (
-        f"if _T({POOL_REF})=='table' and {POOL_REF}[{CHK_TAG}]==true and _T(_src)=='string' and #_src>0 then "
+        f"if _T({POOL_REF})=='table' and {POOL_REF}[{v_jg}]==true and _T(_src)=='string' and #_src>0 then "
         f"local _lk=_ch({ls_chars}) "
         f"local _fn=(_T({POOL_REF})=='table' and _T({POOL_REF}[_lk])=='function' and {POOL_REF}[_lk])"
         f"or (_T(loadstring)=='function' and loadstring)"
@@ -501,7 +505,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         return '--ERROR'
     random.seed(seed)
 
-    pool_count = 18
+    pool_count = 22
     pool_tags = [generate_pool_tag() for _ in range(pool_count)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
     reg_pools = " ".join(
