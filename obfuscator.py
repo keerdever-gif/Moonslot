@@ -274,10 +274,6 @@ _safe_call(_check_timing_and_env)
 def randomName() -> str:
     return "_" + random.choice("abcdefghijklmnopqrstuvwxyz") + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3))) + str(random.randint(0, 99))
 
-def generate_opaque_predicate() -> str:
-    r = random.randint(1, 99)
-    return f"(_bx({r},{r})==0)"
-
 def _tokenize_lua(code: str):
     tokens = []
     i, n = 0, len(code)
@@ -413,22 +409,7 @@ if type(pcall) == "function" then
 end
 """
 
-def build22kBlock(pool_tags) -> str:
-    tbl = randomName()
-    soup = [f"local {tbl}={{}}"]
-    target_chars = 2880
-    while len("".join(soup)) < target_chars:
-        tag = lua_quote(random.choice(pool_tags))
-        v = randomName()
-        k_idx = random.randint(1, 9999)
-        sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
-        pred = generate_opaque_predicate()
-        guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
-        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
-    soup.append(f"{tbl}=nil ")
-    return "".join(soup)
-
-def buildVMBlock(payloadStr: str, pool_tags) -> str:
+def buildMainTableVM(payloadStr: str, pool_tags) -> str:
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
     op_chunk = random.randint(10, 80)
@@ -498,7 +479,9 @@ def buildParamWrapper(inner_lua: str) -> str:
     return (
         f"return(function({params_str})"
         f"local {rev_lhs}={rhs_str} "
-        f"if _T(K)=='function'then K(function(){inner_lua} end)else {inner_lua} end "
+        f"local _run=function(){inner_lua} end "
+        f"if _T(K)=='function'then return K(_run)end "
+        f"return _run() "
         f"end)(...)"
     )
 
@@ -518,7 +501,7 @@ def validate_generated_lua(lua_code: str) -> None:
     if depth_paren != 0 or depth_bracket != 0 or depth_brace != 0:
         raise ValueError(f"Unbalanced delimiters: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}")
 
-def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
+def obfuscate(sourceCode: str, seed: int = 0) -> str:
     if not sourceCode:
         return '--ERROR'
     random.seed(seed)
@@ -536,19 +519,16 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
 
     at_core = minify_payload(ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua))
     extra_prots = minify_payload(getExtraProtections(pool_tags))
-    filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
 
-    vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags)
-    vm_user = buildVMBlock(obfuscated_user_code, pool_tags)
+    combined_payload = f"{extra_prots} {at_core} {obfuscated_user_code}"
+    main_vm = buildMainTableVM(combined_payload, pool_tags)
 
     core_body = (
         f"{BOOTSTRAP_HELPERS}"
         f"local _mc={{}}for i=1,360 do _mc[i]=_rp('X',24)end _mc=nil "
         f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
         f"{reg_pools} "
-        f"{filler_22k}"
-        f"{vm_prot} "
-        f"{vm_user}"
+        f"{main_vm}"
     )
 
     wrapped_code = buildParamWrapper(minify_payload(core_body))
@@ -561,14 +541,13 @@ def main():
     ap.add_argument('input')
     ap.add_argument('-o', '--output', default='obfuscated.lua')
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--repeat-22k', type=int, default=2)
 
     args, _ = ap.parse_known_args()
 
     try:
         with open(args.input, encoding='utf-8') as f:
             src = f.read()
-        out = obfuscate(src, seed=args.seed, repeat_22k=args.repeat_22k)
+        out = obfuscate(src, seed=args.seed)
         with open(args.output, 'w', encoding='utf-8') as f:
             f.write(out)
     except Exception as e:
