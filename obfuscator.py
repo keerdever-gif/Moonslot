@@ -13,26 +13,6 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 PARAM_LIST = ["o", "T", "l", "I", "q", "U", "Q", "K", "F", "z", "w", "y", "Z", "i", "L", "c", "r", "H", "h", "s"]
 
-def int_to_b36(num: int) -> str:
-    if num <= 0:
-        return "0"
-    digits = []
-    n = num
-    while n > 0:
-        digits.append(_BASE36[n % 36])
-        n //= 36
-    return "".join(reversed(digits))
-
-def encode_bytes_b36(data: bytes) -> str:
-    parts = []
-    for i in range(0, len(data), 3):
-        grp = data[i:i+3]
-        val = 0
-        for b in grp:
-            val = (val << 8) | b
-        parts.append(f"{len(grp)}:{int_to_b36(val)}")
-    return "|".join(parts)
-
 def hidden_alert_call() -> str:
     return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
 
@@ -56,42 +36,6 @@ BOOTSTRAP_HELPERS = (
     "local _rn=(type(math)=='table'and type(math.random)=='function')and math.random or function(a,b)return a or 0 end "
     "local _er=type(error)=='function'and error or function()end "
     "local _RT=(getgenv and _T(getgenv)=='function')and getgenv()or _G "
-    "local _B36A='0123456789abcdefghijklmnopqrstuvwxyz' "
-    "local _B36M={} "
-    "if _T(string)=='table' and _T(string.sub)=='function' then "
-    "for i=1,#_B36A do _B36M[string.sub(_B36A,i,i)]=i-1 end "
-    "end "
-    "local function _b36_dec(s)"
-    "if _T(s)~='string' or #s==0 or _T(string.sub)~='function' then return nil end "
-    "local acc=0 "
-    "for i=1,#s do "
-    "local d=_B36M[string.sub(s,i,i)] "
-    "if d==nil then return nil end "
-    "acc=acc*36+d "
-    "end "
-    "return acc "
-    "end "
-    "local function _b36_unpack(enc)"
-    "if _T(enc)~='string' or #enc==0 or _T(string.gmatch)~='function' or _T(string.sub)~='function' then return '' end "
-    "local out={} "
-    "for tok in string.gmatch(enc,'[^|]+') do "
-    "local col=string.find(tok,':',1,true) "
-    "if col and col>1 then "
-    "local nlen=tonumber(string.sub(tok,1,col-1)) "
-    "local val=_b36_dec(string.sub(tok,col+1)) "
-    "if nlen and val and nlen>=1 and nlen<=3 then "
-    "local tmp={} "
-    "for j=nlen,1,-1 do "
-    "local b=_fl(val%256) "
-    "val=_fl(val/256) "
-    "tmp[j]=_ch(b) "
-    "end "
-    "for j=1,nlen do _ti(out,tmp[j]) end "
-    "end "
-    "end "
-    "end "
-    "return _tc(out) "
-    "end "
 )
 
 ANTI_TAMPER_CORE = r'''
@@ -384,8 +328,7 @@ def obfuscate_identifiers(code: str) -> str:
         'ipairs', 'pairs', 'next', 'tostring', 'rawget', 'rawset', 'setmetatable',
         'getmetatable', 'typeof', 'coroutine', 'buffer', 'os', 'Instance', 'workspace',
         'clonefunction', 'hookfunction', 'collectgarbage', 'gethui', 'UDim2', 'Color3',
-        '_G', '_RT', '_tampered', 'Spy', '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er',
-        '_B36A', '_B36M', '_b36_dec', '_b36_unpack'
+        '_G', '_RT', '_tampered', 'Spy', '_T', '_bx', '_ch', '_rp', '_tc', '_ti', '_fl', '_rn', '_er'
     }
     keywords.update(OPCODE_VARS)
     keywords.update(PARAM_LIST)
@@ -477,24 +420,18 @@ def build22kBlock(pool_tags) -> str:
     while len("".join(soup)) < target_chars:
         tag = lua_quote(random.choice(pool_tags))
         v = randomName()
-        k_b36 = lua_quote(int_to_b36(random.randint(1, 999999)))
-        raw_s = "".join(random.choice(_BASE36) for _ in range(random.randint(12, 24))).encode("utf-8")
-        b36_s = lua_quote(encode_bytes_b36(raw_s))
+        k_idx = random.randint(1, 9999)
+        sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         pred = generate_opaque_predicate()
         guarded = f"if _T(_RT)=='table' and _RT[{tag}]==nil then _tampered=true {hidden_alert_call()} end "
-        soup.append(
-            f"if {pred} then {guarded}"
-            f"local _ki=_b36_dec({k_b36}) "
-            f"local {v}=_b36_unpack({b36_s}) "
-            f"if _ki and _T({v})=='string' then {tbl}[_ki]={v} end end "
-        )
+        soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
     soup.append(f"{tbl}=nil ")
     return "".join(soup)
 
 def buildVMBlock(payloadStr: str, pool_tags) -> str:
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
-    op_b36 = random.randint(10, 80)
+    op_chunk = random.randint(10, 80)
     op_nop = random.randint(81, 160)
     op_end = random.randint(161, 240)
 
@@ -504,16 +441,16 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
     inst = []
     for part in parts:
         if random.random() < 0.12:
-            inst.append(f"{{{v_mn},{lua_quote(int_to_b36(random.randint(0, 9999)))}}}")
-        inst.append(f"{{{v_dr},{lua_quote(encode_bytes_b36(part.encode('utf-8')))}}}")
-    inst.append(f"{{{v_et},{lua_quote(int_to_b36(0))}}}")
+            inst.append(f"{{{v_mn},0}}")
+        inst.append(f"{{{v_dr},{lua_quote(part)}}}")
+    inst.append(f"{{{v_et},0}}")
 
     POOL_REF = randomName()
     CHK_TAG = lua_quote(random.choice(pool_tags))
     OP_MAP = randomName()
 
     vm = (
-        f"local {v_dr}={op_b36} local {v_mn}={op_nop} local {v_et}={op_end} "
+        f"local {v_dr}={op_chunk} local {v_mn}={op_nop} local {v_et}={op_end} "
         f"local {v_gh}=1 local {v_ty}={{}} local {v_ui}=0 local {v_op}=0 local {v_vu}=nil "
         f"local {v_bn}=_T(_RT)=='table' and _RT or _G "
         f"local {v_jg}={CHK_TAG} "
@@ -526,7 +463,7 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         f"local {OP_MAP}={v_yh}[{v_gh}] "
         f"{v_op},{v_vu}={OP_MAP}[1],{OP_MAP}[2] "
         f"if {v_op}=={v_ka}[{v_dr}] and _T({v_vu})=='string' then "
-        f"_ti({v_ty},_b36_unpack({v_vu})) {v_ui}={v_ui}+1 "
+        f"_ti({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
         f"elseif {v_op}=={v_ka}[{v_et}] then break end "
         f"{v_gh}={v_gh}+1 end "
         f"local _src=_tc({v_ty}) {v_ty}=nil "
