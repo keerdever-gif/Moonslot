@@ -269,16 +269,17 @@ def apply_moonveil_style_macros(code: str) -> str:
 def build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt) -> str:
     return (
         f"local {v_t}=type "
+        f"local {v_fl}=({v_t}(math)=='table'and {v_t}(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
+        f"local {v_rn}=({v_t}(math)=='table'and {v_t}(math.random)=='function')and math.random or function(a)return a or 0 end "
         f"local {v_bx}=({v_t}(bit32)=='table'and {v_t}(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
         f"if {v_t}(a)~='number' or {v_t}(b)~='number' then return 0 end "
         f"local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a={v_fl}(a/2)b={v_fl}(b/2)p=p*2 end return r end "
+        f"local _bx={v_bx} "
         f"local {v_ch}=({v_t}(string)=='table'and {v_t}(string.char)=='function')and string.char or function()return''end "
         f"local {v_by}=({v_t}(string)=='table'and {v_t}(string.byte)=='function')and string.byte or function()return 0 end "
         f"local {v_rp}=({v_t}(string)=='table'and {v_t}(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..tostring(s or '')end return o end "
         f"local {v_tc}=({v_t}(table)=='table'and {v_t}(table.concat)=='function')and table.concat or function(t)local o=''if {v_t}(t)=='table'then for _,v in ipairs(t)do o=o..tostring(v or '')end end return o end "
         f"local {v_ti}=({v_t}(table)=='table'and {v_t}(table.insert)=='function')and table.insert or function(t,v)if {v_t}(t)=='table' then t[#t+1]=v end end "
-        f"local {v_fl}=({v_t}(math)=='table'and {v_t}(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
-        f"local {v_rn}=({v_t}(math)=='table'and {v_t}(math.random)=='function')and math.random or function(a)return a or 0 end "
         f"local {v_rt}=nil "
         f"if {v_t}(getgenv)=='function' then local _ok,_gv=pcall(getgenv) if _ok and {v_t}(_gv)=='table' then {v_rt}=_gv end end "
         f"if {v_t}({v_rt})~='table' then {v_rt}=_G end "
@@ -396,38 +397,44 @@ end
 
 local function {chk_meta_coro}()
     if {f_flag} then return end
-    if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
-        local co = coroutine.create(function()
-            coroutine.yield(10)
-            coroutine.yield(20)
-        end)
-        local _, v1 = coroutine.resume(co)
-        local _, v2 = coroutine.resume(co)
-        if v1 ~= 10 or v2 ~= 20 then
-            {f_corrupt}()
-            return
+    {f_safe}(function()
+        if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
+            local co = coroutine.create(function()
+                coroutine.yield(10)
+                coroutine.yield(20)
+            end)
+            local _, v1 = coroutine.resume(co)
+            local _, v2 = coroutine.resume(co)
+            if v1 ~= 10 or v2 ~= 20 then
+                {f_corrupt}()
+                return
+            end
         end
-    end
-    local mt = setmetatable({{}}, {{__index = function(_, k) return tostring(k) .. "_ok" end}})
-    if mt[{s_env_k}] ~= {s_env_ok} then
-        {f_corrupt}()
-        return
-    end
-    local rawT = setmetatable({{}}, {{__newindex = function() end}})
-    if type(rawset) == "function" and type(rawget) == "function" then
-        rawset(rawT, {s_val_k}, 42)
-        if rawget(rawT, {s_val_k}) ~= 42 then
-            {f_corrupt}()
+        if type(setmetatable) == "function" then
+            local mt = setmetatable({{}}, {{__index = function(_, k) return tostring(k) .. "_ok" end}})
+            if mt[{s_env_k}] ~= {s_env_ok} then
+                {f_corrupt}()
+                return
+            end
+            local rawT = setmetatable({{}}, {{__newindex = function() end}})
+            if type(rawset) == "function" and type(rawget) == "function" then
+                rawset(rawT, {s_val_k}, 42)
+                if rawget(rawT, {s_val_k}) ~= 42 then
+                    {f_corrupt}()
+                end
+            end
         end
-    end
+    end)
 end
 
 local function {chk_env_funs}()
     if {f_flag} then return end
-    local okChar, resChar = {f_safe}(string.char, nil)
-    if okChar and resChar == "" then
-        {f_corrupt}()
-        return
+    if type(string) == "table" and type(string.char) == "function" then
+        local okChar, resChar = {f_safe}(string.char, nil)
+        if okChar and resChar == "" then
+            {f_corrupt}()
+            return
+        end
     end
     {f_safe}(function()
         if type(debug) == "table" and type(debug.getconstants) == "function" and type(debug.setconstant) == "function" then
@@ -470,9 +477,9 @@ end
 local function {chk_timing}()
     if {f_flag} then return end
     {f_safe}(function()
-        if type(getgenv) == "function" then
+        if type(getgenv) == "function" and type(os) == "table" and type(task) == "table" and type(math) == "table" then
             local c = os.clock
-            local w = task and task.wait
+            local w = task.wait
             local m = math.sin
             if type(c) == "function" and type(w) == "function" and type(m) == "function" then
                 local t1 = c()
@@ -602,7 +609,7 @@ def obfuscate_identifiers(code: str, protected_names: set[str]) -> str:
         "ipairs", "pairs", "next", "tostring", "rawget", "rawset", "setmetatable",
         "getmetatable", "typeof", "coroutine", "buffer", "os", "Instance", "workspace",
         "clonefunction", "hookfunction", "collectgarbage", "gethui", "UDim2", "Color3",
-        "_G", "Enum",
+        "_G", "Enum", "_bx",
     }
     keywords.update(OPCODE_VARS)
     keywords.update(protected_names)
@@ -968,7 +975,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     v_rt = randomName()
     v_dt = randomName()
 
-    protected_names = {v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt}
+    protected_names = {v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt, "_bx"}
 
     pool_tags = [generate_pool_tag() for _ in range(POOL_COUNT)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
