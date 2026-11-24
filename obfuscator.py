@@ -2,7 +2,7 @@ import re
 import random
 import argparse
 
-HEADER = '''--[[ This code is protected by moonslot 0.2 if you want protect your code whit real obfuscation go to https://discord.gg/ZMnTeuTZ5
+HEADER = '''--[[ This code is protected by moonslot 1.02.1 if you want protect your code whit real obfuscation go to https://discord.gg/ZMnTeuTZ5
 ]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
@@ -145,6 +145,7 @@ def encode_lua_string(s: str) -> str:
         f"(function()local function {fn_name}()"
         f"local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return '' end "
         f"local {x_fn}=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
+        f"if type(a)~='number'or type(b)~='number'then return 0 end "
         f"local {r_v},{bit_v}=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then {r_v}={r_v}+{bit_v} end a=math.floor(a/2)b=math.floor(b/2){bit_v}={bit_v}*2 end return {r_v} end "
         f"local {acc}='' "
         f"local {p1}={{{b1}}} "
@@ -269,15 +270,18 @@ def build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn,
     return (
         f"local {v_t}=type "
         f"local {v_bx}=({v_t}(bit32)=='table'and {v_t}(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
-        f"local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
+        f"if {v_t}(a)~='number' or {v_t}(b)~='number' then return 0 end "
+        f"local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a={v_fl}(a/2)b={v_fl}(b/2)p=p*2 end return r end "
         f"local {v_ch}=({v_t}(string)=='table'and {v_t}(string.char)=='function')and string.char or function()return''end "
         f"local {v_by}=({v_t}(string)=='table'and {v_t}(string.byte)=='function')and string.byte or function()return 0 end "
-        f"local {v_rp}=({v_t}(string)=='table'and {v_t}(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..s end return o end "
-        f"local {v_tc}=({v_t}(table)=='table'and {v_t}(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or''end "
-        f"local {v_ti}=({v_t}(table)=='table'and {v_t}(table.insert)=='function')and table.insert or function(t,v)t[#t+1]=v end "
+        f"local {v_rp}=({v_t}(string)=='table'and {v_t}(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..tostring(s or '')end return o end "
+        f"local {v_tc}=({v_t}(table)=='table'and {v_t}(table.concat)=='function')and table.concat or function(t)local o=''if {v_t}(t)=='table'then for _,v in ipairs(t)do o=o..tostring(v or '')end end return o end "
+        f"local {v_ti}=({v_t}(table)=='table'and {v_t}(table.insert)=='function')and table.insert or function(t,v)if {v_t}(t)=='table' then t[#t+1]=v end end "
         f"local {v_fl}=({v_t}(math)=='table'and {v_t}(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
         f"local {v_rn}=({v_t}(math)=='table'and {v_t}(math.random)=='function')and math.random or function(a)return a or 0 end "
-        f"local {v_rt}=(getgenv and {v_t}(getgenv)=='function')and getgenv()or _G "
+        f"local {v_rt}=nil "
+        f"if {v_t}(getgenv)=='function' then local _ok,_gv=pcall(getgenv) if _ok and {v_t}(_gv)=='table' then {v_rt}=_gv end end "
+        f"if {v_t}({v_rt})~='table' then {v_rt}=_G end "
         f"local {v_dt}={{}} "
     )
 
@@ -310,7 +314,16 @@ def build_anti_tamper_core(pool_list_lua: str) -> str:
     return f"""
 local {f_flag} = false
 local {f_pools} = {pool_list_lua}
-local {f_root} = (getgenv and type(getgenv) == "function") and getgenv() or _G
+local {f_root} = nil
+if type(getgenv) == "function" then
+    local _okG, _gvG = pcall(getgenv)
+    if _okG and type(_gvG) == "table" then
+        {f_root} = _gvG
+    end
+end
+if type({f_root}) ~= "table" then
+    {f_root} = _G
+end
 
 local function {f_safe}(fn, ...)
     if type(fn) ~= "function" then
@@ -358,8 +371,8 @@ end
 local function {chk_hooks_dbg}()
     if {f_flag} then return end
     if type(print) == "function" and type(tostring) == "function" then
-        local ps = tostring(print)
-        if type(ps) == "string" and ps:match({s_hook_pat}) then
+        local _okP, ps = {f_safe}(tostring, print)
+        if _okP and type(ps) == "string" and ps:match({s_hook_pat}) then
             {f_corrupt}()
             return
         end
@@ -444,9 +457,11 @@ local function {chk_env_funs}()
         if type(clonefunction) == "function" and type(hookfunction) == "function" then
             local function probeA() return 1 end
             local ca = clonefunction(probeA)
-            local st = {f_safe}(hookfunction, probeA, function() return 2 end)
-            if st and probeA() == 2 and ca() == 1 then
-                {f_corrupt}()
+            if type(ca) == "function" then
+                local st = {f_safe}(hookfunction, probeA, function() return 2 end)
+                if st and probeA() == 2 and ca() == 1 then
+                    {f_corrupt}()
+                end
             end
         end
     end)
@@ -605,10 +620,25 @@ def obfuscate_identifiers(code: str, protected_names: set[str]) -> str:
                 j += 1
                 while j < len(tokens) and tokens[j][0] == "ws":
                     j += 1
-            if j < len(tokens) and tokens[j][0] == "ident":
-                vname = tokens[j][1]
-                if vname not in keywords and len(vname) > 1:
-                    local_vars.add(vname)
+                if j < len(tokens) and tokens[j][0] == "ident":
+                    vname = tokens[j][1]
+                    if vname not in keywords and len(vname) > 1:
+                        local_vars.add(vname)
+            else:
+                while j < len(tokens):
+                    if tokens[j][0] == "ident":
+                        vname = tokens[j][1]
+                        if vname not in keywords and len(vname) > 1:
+                            local_vars.add(vname)
+                        j += 1
+                        while j < len(tokens) and tokens[j][0] == "ws":
+                            j += 1
+                        if j < len(tokens) and tokens[j][0] == "sym" and tokens[j][1] == ",":
+                            j += 1
+                            while j < len(tokens) and tokens[j][0] == "ws":
+                                j += 1
+                            continue
+                    break
 
     mapping = {}
     for v in sorted(local_vars):
@@ -678,9 +708,6 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfus
 
 
 def minify_payload(code: str) -> str:
-    code = re.sub(r"--\[\[.*?\]\]", "", code, flags=re.DOTALL)
-    code = re.sub(r"--[^\n]*", "", code)
-
     tokens = _tokenize_lua(code)
     meaningful = [(k, v) for (k, v) in tokens if k not in ("ws", "comment")]
 
@@ -737,7 +764,7 @@ def getExtraProtections(pool_tags) -> str:
     s_mt = ascii_obfuscate("locked")
     s_chk = ascii_obfuscate("a")
     checks = "\n".join(
-        f'    if type(getgenv) == "function" and type(getgenv()) == "table" and getgenv()[{lua_quote(tag)}] ~= true and (type(_G) ~= "table" or _G[{lua_quote(tag)}] ~= true) then return end'
+        f'    if type(getgenv) == "function" then local _okG,_gvG = pcall(getgenv) if _okG and type(_gvG) == "table" and _gvG[{lua_quote(tag)}] ~= true and (type(_G) ~= "table" or _G[{lua_quote(tag)}] ~= true) then return end end'
         for tag in pool_tags
     )
     return f"""
@@ -793,10 +820,12 @@ def buildVMBlock(payloadStr: str, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt) -> str
         f"while {v_gh}<=#{v_yh} do "
         f"if {v_t}({pool_ref})=='table' and {pool_ref}[{v_jg}]~=true then {corrupt_fn}() return end "
         f"local {op_map}={v_yh}[{v_gh}] "
+        f"if {v_t}({op_map})=='table' then "
         f"{v_op},{v_vu}={op_map}[1],{op_map}[2] "
         f"if {v_op}=={v_ka}[{v_dr}] and {v_t}({v_vu})=='string' then "
         f"{v_ti}({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
         f"elseif {v_op}=={v_ka}[{v_et}] then break end "
+        f"end "
         f"{v_gh}={v_gh}+1 end "
         f"local {src_var}={v_tc}({v_ty}) {v_ty}=nil {v_yh}=nil "
     )
@@ -868,19 +897,29 @@ def wrap_final_code(code: str, pool_tags) -> str:
 
     init_and_check = (
         f"local function {v_init}() "
-        f"local {v_root_ref}=({gv_key} and type(_G[{gv_key}])=='function')and _G[{gv_key}]()or _G[{g_key}] or _G "
+        f"local {v_root_ref}=nil "
+        f"if type(_G)=='table' and type(_G[{gv_key}])=='function' then "
+        f"local _okV,_gvV=pcall(_G[{gv_key}]) "
+        f"if _okV and type(_gvV)=='table' then {v_root_ref}=_gvV end "
+        f"end "
+        f"if type({v_root_ref})~='table' then {v_root_ref}=(type(_G)=='table' and type(_G[{g_key}])=='table' and _G[{g_key}]) or _G end "
         f"{pool_init}"
         f"end "
         f"local function {v_chk}() "
-        f"local {v_root_ref}=({gv_key} and type(_G[{gv_key}])=='function')and _G[{gv_key}]()or _G[{g_key}] or _G "
+        f"local {v_root_ref}=nil "
+        f"if type(_G)=='table' and type(_G[{gv_key}])=='function' then "
+        f"local _okV,_gvV=pcall(_G[{gv_key}]) "
+        f"if _okV and type(_gvV)=='table' then {v_root_ref}=_gvV end "
+        f"end "
+        f"if type({v_root_ref})~='table' then {v_root_ref}=(type(_G)=='table' and type(_G[{g_key}])=='table' and _G[{g_key}]) or _G end "
         f"{pool_checks}"
         f"if type(debug)=='table' and type(debug.gethook)=='function' then "
         f"local _ok,_hk=pcall(debug.gethook) "
         f"if _ok and _hk~=nil then return false end "
         f"end "
         f"if type(print)=='function' and type(tostring)=='function' then "
-        f"local _ps=tostring(print) "
-        f"if type(_ps)=='string' and _ps:match({ascii_obfuscate('^function: 0x0000')}) then return false end "
+        f"local _okS,_ps=pcall(tostring,print) "
+        f"if _okS and type(_ps)=='string' and _ps:match({ascii_obfuscate('^function: 0x0000')}) then return false end "
         f"end "
         f"return true "
         f"end "
@@ -896,8 +935,8 @@ def wrap_final_code(code: str, pool_tags) -> str:
         f"if not {v_chk}() then return end "
         f"{code} "
         f"end "
-        f"local {v_runner}=function() return {v_fn}() end "
-        f"{v_runner}()"
+        f"local {v_runner}=function() if type({v_fn})=='function' then return {v_fn}() end end "
+        f"if type({v_runner})=='function' then {v_runner}() end"
     )
     return minify_payload(wrapper)
 
