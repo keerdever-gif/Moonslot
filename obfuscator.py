@@ -11,6 +11,9 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 POOL_COUNT = 8
 
+# Registro global de nombres para evitar colisiones entre etapas
+_GLOBAL_USED_NAMES = set(OPCODE_VARS)
+
 HEARTBEAT_TEMPLATE = """local RunService = game:GetService("RunService")
 local ticks = 0
 local total = 0
@@ -26,6 +29,40 @@ end)
 """
 
 # ───────────────────────── helpers básicos ─────────────────────────
+
+def reset_name_registry(extra_protected=None):
+    _GLOBAL_USED_NAMES.clear()
+    _GLOBAL_USED_NAMES.update(OPCODE_VARS)
+    _GLOBAL_USED_NAMES.update({
+        "and", "break", "do", "else", "elseif", "end", "false", "for", "function",
+        "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
+        "until", "while", "pcall", "type", "math", "string", "table", "bit32",
+        "game", "task", "loadstring", "load", "getfenv", "getgenv", "setfenv", "debug",
+        "ipairs", "pairs", "next", "tostring", "rawget", "rawset", "setmetatable",
+        "getmetatable", "typeof", "coroutine", "buffer", "os", "Instance", "workspace",
+        "clonefunction", "hookfunction", "collectgarbage", "gethui", "UDim2", "Color3",
+        "_G", "Enum", "_bx", "_i", "_x", "_f", "_p", "_ok", "_gv", "_okG", "_gvG",
+        "_okS", "_okI", "_okC", "_okCl", "_okV", "_gvV", "_ps", "_hk"
+    })
+    if extra_protected:
+        _GLOBAL_USED_NAMES.update(extra_protected)
+
+def randomName(used_names=None) -> str:
+    while True:
+        cand = (
+            "_"
+            + random.choice("abcdefghijklmnopqrstuvwxyz")
+            + "".join(random.choice(_BASE36) for _ in range(random.randint(3, 5)))
+            + str(random.randint(100, 9999))
+        )
+        if cand in _GLOBAL_USED_NAMES:
+            continue
+        if used_names is not None and cand in used_names:
+            continue
+        _GLOBAL_USED_NAMES.add(cand)
+        if used_names is not None:
+            used_names.add(cand)
+        return cand
 
 def _str_from_bytes(s: str) -> str:
     raw = s.encode("utf-8")
@@ -84,9 +121,9 @@ def fragmented_ascii_obfuscate(s: str) -> str:
             expr = f"({b + d1 + d2}-{d1}-{d2})"
         chunks.append(f"{c_fn}({expr})")
     return (
-        f"(function()local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return''end "
+        f"(function() local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return ''end "
         f"local {cat_fn}=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)local o=''for _,v in ipairs(t)do o=o..tostring(v or '')end return o end "
-        f"return {cat_fn}({{{','.join(chunks)}}})end)()"
+        f"return {cat_fn}({{{','.join(chunks)}}}) end)()"
     )
 
 def generate_pool_tag() -> str:
@@ -109,45 +146,61 @@ def _decode_lua_string_literal(val: str):
     out_chars = []
     i = 0
     n = len(body)
-    escape_map = {"a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
-                  "t": "\t", "v": "\v", "\\": "\\", '"': '"', "'": "'"}
+    escape_map = {
+        "a": "\a", "b": "\b", "f": "\f", "n": "\n", "r": "\r",
+        "t": "\t", "v": "\v", "\\": "\\", '"': '"', "'": "'"
+    }
     while i < n:
         ch = body[i]
         if ch != "\\":
-            out_chars.append(ch); i += 1; continue
+            out_chars.append(ch)
+            i += 1
+            continue
         i += 1
-        if i >= n: return None
+        if i >= n:
+            return None
         esc = body[i]
         if esc in escape_map:
-            out_chars.append(escape_map[esc]); i += 1
+            out_chars.append(escape_map[esc])
+            i += 1
         elif esc.isdigit():
-            digits = esc; i += 1
+            digits = esc
+            i += 1
             while i < n and len(digits) < 3 and body[i].isdigit():
-                digits += body[i]; i += 1
+                digits += body[i]
+                i += 1
             code_val = int(digits)
-            if code_val > 255: return None
+            if code_val > 255:
+                return None
             out_chars.append(chr(code_val))
         else:
-            out_chars.append(esc); i += 1
+            out_chars.append(esc)
+            i += 1
     return "".join(out_chars)
 
 def encode_lua_string(s: str) -> str:
     raw = s.encode("utf-8")
-    if not raw: return "''"
+    if not raw:
+        return "''"
     key = random.randint(17, 239)
     half = max(1, len(raw) // 2)
     b1 = ",".join(str(b ^ key) for b in raw[:half])
     b2 = ",".join(str(b ^ key) for b in raw[half:])
-    fn_name = randomName(); c_fn = randomName(); x_fn = randomName()
-    acc = randomName(); item = randomName(); p1 = randomName()
-    r_v = randomName(); bit_v = randomName()
+    fn_name = randomName()
+    c_fn = randomName()
+    x_fn = randomName()
+    acc = randomName()
+    item = randomName()
+    p1 = randomName()
+    r_v = randomName()
+    bit_v = randomName()
     part2_loop = (
         f"for _,{item} in ipairs({{{b2}}})do {acc}={acc}..{c_fn}({x_fn}({item},{key}))end "
         if b2 else ""
     )
     return (
-        f"(function()local function {fn_name}()"
-        f"local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return '' end "
+        f"(function() local function {fn_name}()"
+        f"local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return ''end "
         f"local {x_fn}=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
         f"if type(a)~='number'or type(b)~='number'then return 0 end "
         f"local {r_v},{bit_v}=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then {r_v}={r_v}+{bit_v} end a=math.floor(a/2)b=math.floor(b/2){bit_v}={bit_v}*2 end return {r_v} end "
@@ -162,11 +215,15 @@ def encode_lua_string(s: str) -> str:
 def obfuscate_number(n: int) -> str:
     mode = random.randint(0, 3)
     if mode == 0:
-        a = random.randint(10, 999); b = a - n
+        a = random.randint(10, 999)
+        b = a - n
         return f"({a}-{b})"
     elif mode == 1:
-        k = random.randint(2, 9); rem = n % k; q = (n - rem) // k
-        if rem == 0: return f"({q}*{k})"
+        k = random.randint(2, 9)
+        rem = n % k
+        q = (n - rem) // k
+        if rem == 0:
+            return f"({q}*{k})"
         return f"({q}*{k}+{rem})"
     elif mode == 2:
         delta = random.randint(1, 250)
@@ -175,129 +232,255 @@ def obfuscate_number(n: int) -> str:
         x = random.randint(1, 120)
         return f"(_bx({n ^ x},{x}))"
 
-def randomName(used_names=None) -> str:
-    while True:
-        cand = ("_" + random.choice("abcdefghijklmnopqrstuvwxyz")
-                + "".join(random.choice(_BASE36) for _ in range(random.randint(2, 4)))
-                + str(random.randint(10, 999)))
-        if not used_names or cand not in used_names:
-            if used_names is not None:
-                used_names.add(cand)
-            return cand
-
 def generate_opaque_predicate() -> str:
     r = random.randint(1, 99)
     return f"(_bx({r},{r})==0)"
 
 # ───────────────────────── macros MoonVeil-style ─────────────────────────
 
+def _extract_balanced_call(code: str, macro_name: str):
+    """
+    Busca llamadas tipo MACRO(arg1, arg2) respetando paréntesis anidados y strings.
+    Devuelve una lista de tuplas (start_idx, end_idx, inner_content).
+    """
+    pattern = re.compile(rf"\b{macro_name}\s*\(")
+    matches = []
+    pos = 0
+    n = len(code)
+    while pos < n:
+        m = pattern.search(code, pos)
+        if not m:
+            break
+        start = m.start()
+        i = m.end() - 1  # apuntando a '('
+        depth = 0
+        in_str = None
+        escape = False
+        found_end = -1
+        while i < n:
+            ch = code[i]
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == in_str:
+                    in_str = None
+            else:
+                if ch in ('"', "'"):
+                    in_str = ch
+                elif ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                    if depth == 0:
+                        found_end = i + 1
+                        break
+            i += 1
+        if found_end != -1:
+            matches.append((start, found_end, code[m.end():found_end - 1]))
+            pos = found_end
+        else:
+            pos = m.end()
+    return matches
+
+def _replace_balanced_macro(code: str, macro_name: str, replacer_fn) -> str:
+    spans = _extract_balanced_call(code, macro_name)
+    if not spans:
+        return code
+    out = []
+    last = 0
+    for start, end, inner in spans:
+        out.append(code[last:start])
+        out.append(replacer_fn(inner, start))
+        last = end
+    out.append(code[last:])
+    return "".join(out)
+
+def _split_top_level_args(inner: str):
+    args = []
+    buf = []
+    depth_p = depth_b = depth_c = 0
+    in_str = None
+    esc = False
+    for ch in inner:
+        if in_str:
+            buf.append(ch)
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == in_str:
+                in_str = None
+            continue
+        if ch in ('"', "'"):
+            in_str = ch
+            buf.append(ch)
+        elif ch == "(":
+            depth_p += 1
+            buf.append(ch)
+        elif ch == ")":
+            depth_p = max(0, depth_p - 1)
+            buf.append(ch)
+        elif ch == "[":
+            depth_b += 1
+            buf.append(ch)
+        elif ch == "]":
+            depth_b = max(0, depth_b - 1)
+            buf.append(ch)
+        elif ch == "{":
+            depth_c += 1
+            buf.append(ch)
+        elif ch == "}":
+            depth_c = max(0, depth_c - 1)
+            buf.append(ch)
+        elif ch == "," and depth_p == 0 and depth_b == 0 and depth_c == 0:
+            args.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    tail = "".join(buf).strip()
+    if tail or buf:
+        args.append(tail)
+    return args
+
 def apply_moonveil_style_macros(code: str) -> str:
-    code = re.sub(r"\b(?:MS|MV)_OMIT\s*\([^)]*\)\s*;?", "", code)
+    for prefix in ("MS", "MV"):
+        code = _replace_balanced_macro(code, f"{prefix}_OMIT", lambda _inner, _pos: "")
     code = re.sub(r"\b(?:MS|MV)_OMIT\b[^\n]*", "", code)
-    code = re.sub(r"\b(?:MS|MV)_CRASH\s*\(\s*\)", "return", code)
 
-    def _line_repl(match):
-        line_no = code[: match.start()].count("\n") + 1
-        return obfuscate_number(line_no)
-    code = re.sub(r"\b(?:MS|MV)_LINE\s*\(\s*\)", _line_repl, code)
+    for prefix in ("MS", "MV"):
+        code = _replace_balanced_macro(code, f"{prefix}_CRASH", lambda _inner, _pos: "return")
 
-    code = re.sub(
-        r"\b(?:MS|MV)_OPAQUE\s*\(\s*([^)]*)\s*\)",
-        lambda m: f"({generate_opaque_predicate()} and ({m.group(1).strip() or 'true'}))"
-                  if m.group(1).strip() else generate_opaque_predicate(),
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_ASSUME\s*\(\s*([^)]+)\s*\)",
-        lambda m: f"if not ({m.group(1).strip()}) then return end",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_PRECHECK\s*\(\s*\)",
-        "if type(game)~='userdata' and type(game)~='table' then return end",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_REWRITE\s*\(\s*([^)]+)\s*\)",
-        lambda m: f"(function()return ({m.group(1).strip()})end)()",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_ENC_FUNC\s*\(\s*(function\b.*?\bend)\s*\)",
-        lambda m: f"(function(...)return ({m.group(1).strip()})(...)end)",
-        code,
-    )
+        def _line_repl(_inner, pos):
+            line_no = code[:pos].count("\n") + 1
+            return obfuscate_number(line_no)
 
-    def _enc_str_repl(match):
-        raw_arg = match.group(1).strip()
-        dec = _decode_lua_string_literal(raw_arg)
-        if dec is not None:
-            return encode_lua_string(dec)
-        return raw_arg
-    code = re.sub(r"\b(?:MS|MV)_ENC_STR\s*\(\s*([^)]+)\s*\)", _enc_str_repl, code)
+        code = _replace_balanced_macro(code, f"{prefix}_LINE", _line_repl)
 
-    # ─── macros NUEVAS ───
-    def _vault_repl(match):
-        dec = _decode_lua_string_literal(match.group(1).strip())
-        return encode_lua_string(dec) if dec is not None else match.group(1).strip()
-    code = re.sub(r"\b(?:MS|MV)_VAULT\s*\(\s*([^)]+)\s*\)", _vault_repl, code)
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_OPAQUE",
+            lambda inner, _pos: (
+                f"({generate_opaque_predicate()} and ({inner.strip() or 'true'}))"
+                if inner.strip() else generate_opaque_predicate()
+            ),
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_ASSUME",
+            lambda inner, _pos: f"if not ({inner.strip()}) then return end" if inner.strip() else "",
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_PRECHECK",
+            lambda _inner, _pos: "if type(game)~='userdata' and type(game)~='table' then return end",
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_REWRITE",
+            lambda inner, _pos: f"(function() return ({inner.strip()}) end)()" if inner.strip() else "nil",
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_ENC_FUNC",
+            lambda inner, _pos: f"(function(...) return ({inner.strip()})(...) end)" if inner.strip() else "nil",
+        )
 
-    def _frag_repl(match):
-        dec = _decode_lua_string_literal(match.group(1).strip())
-        return fragmented_ascii_obfuscate(dec) if dec is not None else "''"
-    code = re.sub(r"\b(?:MS|MV)_FRAG_STR\s*\(\s*([^)]+)\s*\)", _frag_repl, code)
+        def _enc_str_repl(inner, _pos):
+            raw_arg = inner.strip()
+            dec = _decode_lua_string_literal(raw_arg)
+            return encode_lua_string(dec) if dec is not None else raw_arg
 
-    code = re.sub(
-        r"\b(?:MS|MV)_SHIELD\s*\(\s*([^)]+)\s*\)",
-        lambda m: f"(function()local _p={generate_opaque_predicate()} if _p then return ({m.group(1).strip()}) end return ({m.group(1).strip()}) end)()",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_SELF_DESTRUCT\s*\(\s*([^)]+)\s*\)",
-        lambda m: f"if not ({m.group(1).strip()}) then return end",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_CHECK\s*\(\s*([^)]+)\s*\)",
-        lambda m: f"if not ({m.group(1).strip()}) then return end",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_SPLIT\s*\(\s*([^)]+)\s*\)",
-        lambda m: f"((function()return ({m.group(1).strip()})end)())",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_JUNK\s*\(\s*(\d+)\s*\)",
-        lambda m: " ".join(f"local _{randomName()}={random.randint(1,9999)}" for _ in range(int(m.group(1)))),
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_FAKE_BRANCH\b",
-        lambda m: f"if {generate_opaque_predicate()} then local _x={random.randint(1,99)} _x=_x end",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_NO_INLINE\s*\(\s*(function\b.*?\bend)\s*\)",
-        lambda m: f"(function(...)local _f={m.group(1).strip()} return _f(...) end)",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_WATERMARK\b",
-        lua_quote(randomName()),
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_INDEX_TO_NUM\s*\(\s*([^,\s]+)\s*,\s*([^)]+)\s*\)",
-        lambda m: f"{m.group(1).strip()}[{obfuscate_number(int(m.group(2).strip())) if m.group(2).strip().isdigit() else m.group(2).strip()}]",
-        code,
-    )
-    code = re.sub(
-        r"\b(?:MS|MV)_(?:INLINE|VM|CFF|COMPRESS|OBFUSCATED)\s*\(\s*([^)]*)\s*\)",
-        lambda m: m.group(1).strip() if m.group(1).strip() else "",
-        code,
-    )
-    code = re.sub(r"\bATTRIBUTE\s*\([^)]*\)", "", code)
+        code = _replace_balanced_macro(code, f"{prefix}_ENC_STR", _enc_str_repl)
+
+        def _vault_repl(inner, _pos):
+            raw_arg = inner.strip()
+            dec = _decode_lua_string_literal(raw_arg)
+            return encode_lua_string(dec) if dec is not None else raw_arg
+
+        code = _replace_balanced_macro(code, f"{prefix}_VAULT", _vault_repl)
+
+        def _frag_repl(inner, _pos):
+            raw_arg = inner.strip()
+            dec = _decode_lua_string_literal(raw_arg)
+            return fragmented_ascii_obfuscate(dec) if dec is not None else "''"
+
+        code = _replace_balanced_macro(code, f"{prefix}_FRAG_STR", _frag_repl)
+
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_SHIELD",
+            lambda inner, _pos: (
+                f"(function() local {randomName()}={generate_opaque_predicate()} "
+                f"return ({inner.strip()}) end)()"
+                if inner.strip() else "nil"
+            ),
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_SELF_DESTRUCT",
+            lambda inner, _pos: f"if not ({inner.strip()}) then return end" if inner.strip() else "",
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_CHECK",
+            lambda inner, _pos: f"if not ({inner.strip()}) then return end" if inner.strip() else "",
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_SPLIT",
+            lambda inner, _pos: f"((function() return ({inner.strip()}) end)())" if inner.strip() else "nil",
+        )
+
+        def _junk_repl(inner, _pos):
+            s = inner.strip()
+            cnt = int(s) if s.isdigit() else 1
+            cnt = max(0, min(cnt, 50))
+            return " ".join(f"local {randomName()}={random.randint(1, 9999)}" for _ in range(cnt))
+
+        code = _replace_balanced_macro(code, f"{prefix}_JUNK", _junk_repl)
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_FAKE_BRANCH",
+            lambda _inner, _pos: (
+                f"if {generate_opaque_predicate()} then local {randomName()}={random.randint(1, 99)} end"
+            ),
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_NO_INLINE",
+            lambda inner, _pos: (
+                f"(function(...) local {randomName()}={inner.strip()} return {randomName()}(...) end)"
+                if inner.strip() else "nil"
+            ),
+        )
+        code = _replace_balanced_macro(
+            code,
+            f"{prefix}_WATERMARK",
+            lambda _inner, _pos: lua_quote(randomName()),
+        )
+
+        def _idx_repl(inner, _pos):
+            parts = _split_top_level_args(inner)
+            if len(parts) < 2:
+                return inner.strip()
+            tbl_expr = parts[0]
+            idx_expr = parts[1]
+            if idx_expr.isdigit():
+                idx_expr = obfuscate_number(int(idx_expr))
+            return f"{tbl_expr}[{idx_expr}]"
+
+        code = _replace_balanced_macro(code, f"{prefix}_INDEX_TO_NUM", _idx_repl)
+
+        for passthrough in ("INLINE", "VM", "CFF", "COMPRESS", "OBFUSCATED"):
+            code = _replace_balanced_macro(
+                code,
+                f"{prefix}_{passthrough}",
+                lambda inner, _pos: inner.strip() if inner.strip() else "",
+            )
+
+    code = _replace_balanced_macro(code, "ATTRIBUTE", lambda _inner, _pos: "")
     return code
 
 # ───────────────────────── bootstrap ─────────────────────────
@@ -325,12 +508,23 @@ def build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn,
 # ───────────────────────── anti-tamper reforzado ─────────────────────────
 
 def build_anti_tamper_core(pool_list_lua: str) -> str:
-    f_flag = randomName(); f_pools = randomName(); f_root = randomName()
-    f_safe = randomName(); f_corrupt = randomName(); f_has = randomName()
-    chk_pools = randomName(); chk_globals = randomName(); chk_hooks_dbg = randomName()
-    chk_meta_coro = randomName(); chk_env_funs = randomName(); chk_timing = randomName()
-    chk_upvalues = randomName(); chk_gc = randomName(); chk_string_dump = randomName()
-    chk_newproxy = randomName(); chk_line_hook = randomName()
+    f_flag = randomName()
+    f_pools = randomName()
+    f_root = randomName()
+    f_safe = randomName()
+    f_corrupt = randomName()
+    f_has = randomName()
+    chk_pools = randomName()
+    chk_globals = randomName()
+    chk_hooks_dbg = randomName()
+    chk_meta_coro = randomName()
+    chk_env_funs = randomName()
+    chk_timing = randomName()
+    chk_upvalues = randomName()
+    chk_gc = randomName()
+    chk_string_dump = randomName()
+    chk_newproxy = randomName()
+    chk_line_hook = randomName()
 
     s_hook_pat = fragmented_ascii_obfuscate("^function: 0x0000")
     s_info_mode = ascii_obfuscate("u")
@@ -568,12 +762,6 @@ if {f_flag} then return end
 # ───────────────────────── decodificador VM estatal MoonVeil ─────────────────────────
 
 def build_moonveil_state_decoder(payload: str, v_t, v_ch, v_by, v_bx) -> str:
-    """
-    Genera una VM estatal estilo MoonVeil que:
-      1. Guarda el payload como dos strings binarios (data XOR key1 XOR key2).
-      2. En runtime recorre un autómata con estados numéricos aleatorios.
-      3. Decodifica byte a byte y ejecuta con loadstring/load.
-    """
     key1 = bytes(random.randint(1, 255) for _ in range(random.randint(8, 24)))
     key2 = bytes(random.randint(1, 255) for _ in range(random.randint(8, 24)))
     raw = payload.encode("utf-8")
@@ -590,16 +778,25 @@ def build_moonveil_state_decoder(payload: str, v_t, v_ch, v_by, v_bx) -> str:
         return '"' + "".join(out) + '"'
 
     data_lua = to_lua_bin(enc2)
-    k1_lua   = to_lua_bin(key1)
-    k2_lua   = to_lua_bin(key2)
+    k1_lua = to_lua_bin(key1)
+    k2_lua = to_lua_bin(key2)
 
-    v_data = randomName(); v_k1 = randomName(); v_k2 = randomName()
-    v_out  = randomName(); v_idx = randomName(); v_end = randomName()
-    v_off  = randomName(); v_state = randomName()
-    v_pos  = randomName(); v_kp  = randomName()
-    v_b1   = randomName(); v_b2  = randomName(); v_b  = randomName()
-    v_ok   = randomName(); v_fn  = randomName(); v_ld = randomName()
-    v_tmp  = randomName(); v_i   = randomName()
+    v_data = randomName()
+    v_k1 = randomName()
+    v_k2 = randomName()
+    v_out = randomName()
+    v_idx = randomName()
+    v_end = randomName()
+    v_off = randomName()
+    v_state = randomName()
+    v_pos = randomName()
+    v_kp = randomName()
+    v_b1 = randomName()
+    v_b2 = randomName()
+    v_b = randomName()
+    v_ok = randomName()
+    v_fn = randomName()
+    v_ld = randomName()
 
     s_init = random.randint(1000, 9999)
     s_loop = random.randint(10000, 19999)
@@ -626,11 +823,11 @@ repeat
         if {v_idx} > {v_end} then {v_state} = {s_done} else {v_state} = {s_body} end
     elseif {v_state} == {s_body} then
         {v_pos} = {v_idx} - {v_off} + 1
-        {v_kp}  = (({v_pos} - 1) % #{v_k1}) + 1
-        {v_b1}  = string.byte({v_data}, {v_pos})
-        {v_b2}  = string.byte({v_k2}, (({v_pos} - 1) % #{v_k2}) + 1)
-        {v_b}   = {v_bx}({v_b1}, {v_b2})
-        {v_b}   = {v_bx}({v_b}, string.byte({v_k1}, {v_kp}))
+        {v_kp} = (({v_pos} - 1) % #{v_k1}) + 1
+        {v_b1} = {v_by}({v_data}, {v_pos})
+        {v_b2} = {v_by}({v_k2}, (({v_pos} - 1) % #{v_k2}) + 1)
+        {v_b} = {v_bx}({v_b1}, {v_b2})
+        {v_b} = {v_bx}({v_b}, {v_by}({v_k1}, {v_kp}))
         {v_out} = {v_out} .. {v_ch}({v_b})
         {v_idx} = {v_idx} + 1
         {v_state} = {s_loop}
@@ -711,47 +908,69 @@ def _tokenize_lua(code: str):
             if i + 3 < n and code[i + 2] == "[":
                 m = re.match(r'--\[(=*)\[', code[i:])
                 if m:
-                    eq = m.group(1); close = "]" + eq + "]"
+                    eq = m.group(1)
+                    close = "]" + eq + "]"
                     j = code.find(close, i + len(m.group(0)))
                     if j != -1:
                         tokens.append(("comment", code[i:j + len(close)]))
-                        i = j + len(close); continue
+                        i = j + len(close)
+                        continue
             j = code.find("\n", i)
             if j == -1:
-                tokens.append(("comment", code[i:])); i = n
+                tokens.append(("comment", code[i:]))
+                i = n
             else:
-                tokens.append(("comment", code[i:j])); i = j
+                tokens.append(("comment", code[i:j]))
+                i = j
         elif c in ('"', "'"):
-            quote = c; j = i + 1
+            quote = c
+            j = i + 1
             while j < n:
-                if code[j] == "\\": j += 2; continue
-                if code[j] == quote: break
+                if code[j] == "\\":
+                    j += 2
+                    continue
+                if code[j] == quote:
+                    break
                 j += 1
             end_idx = min(j + 1, n)
-            tokens.append(("str", code[i:end_idx])); i = end_idx
+            tokens.append(("str", code[i:end_idx]))
+            i = end_idx
         elif c == "[":
             m = re.match(r'\[(=*)\[', code[i:])
             if m:
-                eq = m.group(1); close = "]" + eq + "]"
+                eq = m.group(1)
+                close = "]" + eq + "]"
                 j = code.find(close, i + len(m.group(0)))
                 if j != -1:
                     tokens.append(("str", code[i:j + len(close)]))
-                    i = j + len(close); continue
-            tokens.append(("sym", c)); i += 1
+                    i = j + len(close)
+                    continue
+            tokens.append(("sym", c))
+            i += 1
         elif c.isspace():
-            tokens.append(("ws", c)); i += 1
+            tokens.append(("ws", c))
+            i += 1
         elif c.isdigit():
-            j = i; has_dot = False
-            while j < n and (code[j].isdigit() or (code[j] == "." and not has_dot and j + 1 < n and code[j + 1].isdigit())):
-                if code[j] == ".": has_dot = True
+            j = i
+            has_dot = False
+            while j < n and (
+                code[j].isdigit()
+                or (code[j] == "." and not has_dot and j + 1 < n and code[j + 1].isdigit())
+            ):
+                if code[j] == ".":
+                    has_dot = True
                 j += 1
-            tokens.append(("num", code[i:j])); i = j
+            tokens.append(("num", code[i:j]))
+            i = j
         elif c.isalnum() or c == "_":
             j = i
-            while j < n and (code[j].isalnum() or code[j] == "_"): j += 1
-            tokens.append(("ident", code[i:j])); i = j
+            while j < n and (code[j].isalnum() or code[j] == "_"):
+                j += 1
+            tokens.append(("ident", code[i:j]))
+            i = j
         else:
-            tokens.append(("sym", c)); i += 1
+            tokens.append(("sym", c))
+            i += 1
     return tokens
 
 def obfuscate_identifiers(code: str, protected_names) -> str:
@@ -765,36 +984,45 @@ def obfuscate_identifiers(code: str, protected_names) -> str:
         "clonefunction", "hookfunction", "collectgarbage", "gethui", "UDim2", "Color3",
         "_G", "Enum", "_bx",
     }
-    keywords.update(OPCODE_VARS); keywords.update(protected_names)
+    keywords.update(OPCODE_VARS)
+    keywords.update(protected_names)
 
     tokens = _tokenize_lua(code)
-    local_vars = set(); used_names = set(keywords)
+    local_vars = set()
+    used_names = set(keywords) | set(_GLOBAL_USED_NAMES)
 
     for idx, (kind, val) in enumerate(tokens):
         if kind == "ident" and val == "local":
             j = idx + 1
-            while j < len(tokens) and tokens[j][0] == "ws": j += 1
+            while j < len(tokens) and tokens[j][0] == "ws":
+                j += 1
             if j < len(tokens) and tokens[j][0] == "ident" and tokens[j][1] == "function":
                 j += 1
-                while j < len(tokens) and tokens[j][0] == "ws": j += 1
+                while j < len(tokens) and tokens[j][0] == "ws":
+                    j += 1
                 if j < len(tokens) and tokens[j][0] == "ident":
                     vname = tokens[j][1]
-                    if vname not in keywords and len(vname) > 1: local_vars.add(vname)
+                    if vname not in keywords and len(vname) > 1:
+                        local_vars.add(vname)
             else:
                 while j < len(tokens):
                     if tokens[j][0] == "ident":
                         vname = tokens[j][1]
-                        if vname not in keywords and len(vname) > 1: local_vars.add(vname)
+                        if vname not in keywords and len(vname) > 1:
+                            local_vars.add(vname)
                         j += 1
-                        while j < len(tokens) and tokens[j][0] == "ws": j += 1
+                        while j < len(tokens) and tokens[j][0] == "ws":
+                            j += 1
                         if j < len(tokens) and tokens[j][0] == "sym" and tokens[j][1] == ",":
                             j += 1
-                            while j < len(tokens) and tokens[j][0] == "ws": j += 1
+                            while j < len(tokens) and tokens[j][0] == "ws":
+                                j += 1
                             continue
                     break
 
     mapping = {v: randomName(used_names) for v in sorted(local_vars)}
-    if not mapping: return code
+    if not mapping:
+        return code
 
     out = []
     for idx, (kind, val) in enumerate(tokens):
@@ -802,26 +1030,32 @@ def obfuscate_identifiers(code: str, protected_names) -> str:
             prev_sym = ""
             for p in range(idx - 1, -1, -1):
                 if tokens[p][0] not in ("ws", "comment"):
-                    prev_sym = tokens[p][1]; break
+                    prev_sym = tokens[p][1]
+                    break
             if prev_sym not in (".", ":"):
-                out.append(mapping[val]); continue
+                out.append(mapping[val])
+                continue
         out.append(val)
     return "".join(out)
 
 def obfuscate_strings_and_numbers(code: str, encrypt_strings=True, obfuscate_nums=True) -> str:
-    tokens = _tokenize_lua(code); out = []
+    tokens = _tokenize_lua(code)
+    out = []
     for idx, (kind, val) in enumerate(tokens):
         if kind == "str" and encrypt_strings:
             next_tok = ""
             for n_idx in range(idx + 1, len(tokens)):
                 if tokens[n_idx][0] not in ("ws", "comment"):
-                    next_tok = tokens[n_idx][1]; break
+                    next_tok = tokens[n_idx][1]
+                    break
             prev_tok = ""
             for p_idx in range(idx - 1, -1, -1):
                 if tokens[p_idx][0] not in ("ws", "comment"):
-                    prev_tok = tokens[p_idx][1]; break
+                    prev_tok = tokens[p_idx][1]
+                    break
             if prev_tok == "[" and next_tok == "]":
-                out.append(val); continue
+                out.append(val)
+                continue
             decoded = _decode_lua_string_literal(val)
             if decoded is not None and 0 < len(decoded) <= 128:
                 if len(decoded) <= 12:
@@ -834,11 +1068,13 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings=True, obfuscate_num
             prev_tok = ""
             for p_idx in range(idx - 1, -1, -1):
                 if tokens[p_idx][0] not in ("ws", "comment"):
-                    prev_tok = tokens[p_idx][1]; break
+                    prev_tok = tokens[p_idx][1]
+                    break
             if "." not in val and val.isdigit() and prev_tok not in (".", ":"):
                 n = int(val)
                 if 0 <= n <= 5000:
-                    out.append(obfuscate_number(n)); continue
+                    out.append(obfuscate_number(n))
+                    continue
             out.append(val)
         else:
             out.append(val)
@@ -847,7 +1083,9 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings=True, obfuscate_num
 def minify_payload(code: str) -> str:
     tokens = _tokenize_lua(code)
     meaningful = [(k, v) for (k, v) in tokens if k not in ("ws", "comment")]
-    block_keywords = {"local", "function", "return", "then", "do", "else", "elseif", "end", "until", "in"}
+    block_keywords = {
+        "local", "function", "return", "then", "do", "else", "elseif", "end", "until", "in"
+    }
     out = []
     for idx, (kind, tok) in enumerate(meaningful):
         out.append(tok)
@@ -860,16 +1098,22 @@ def minify_payload(code: str) -> str:
     return "".join(out).strip()
 
 def flatten_control_flow(statements, v_t) -> str:
-    if not statements: return ""
-    state_var = randomName(); dispatch_tbl = randomName(); fn_slot = randomName()
+    if not statements:
+        return ""
+    state_var = randomName()
+    dispatch_tbl = randomName()
+    fn_slot = randomName()
     states = [random.randint(1000, 99999) for _ in range(len(statements) + 1)]
-    shuffled_indices = list(range(len(statements))); random.shuffle(shuffled_indices)
-    end_state = states[-1]; state_to_next = {}
+    shuffled_indices = list(range(len(statements)))
+    random.shuffle(shuffled_indices)
+    end_state = states[-1]
+    state_to_next = {}
     for pos, stmt_idx in enumerate(shuffled_indices):
         cur_s = states[pos]
         nxt_s = states[pos + 1] if pos + 1 < len(shuffled_indices) else end_state
         state_to_next[cur_s] = (statements[stmt_idx], nxt_s)
-    init_state = states[0]; entries = []
+    init_state = states[0]
+    entries = []
     for s_id, (stmt, nxt_id) in state_to_next.items():
         entries.append(f"[{s_id}]=function() {stmt} {state_var}={nxt_id} end")
     return (
@@ -911,18 +1155,26 @@ def buildVMBlock(payloadStr, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt) -> str:
         )
         payloadStr = bx_prelude + payloadStr
 
-    op_chunk = random.randint(10, 80); op_nop = random.randint(81, 160); op_end = random.randint(161, 240)
+    op_chunk = random.randint(10, 80)
+    op_nop = random.randint(81, 160)
+    op_end = random.randint(161, 240)
     chunk_size = 48
     parts = [payloadStr[i:i + chunk_size] for i in range(0, len(payloadStr), chunk_size)]
     inst = []
     for part in parts:
-        if random.random() < 0.12: inst.append(f"{{{v_mn},0}}")
+        if random.random() < 0.12:
+            inst.append(f"{{{v_mn},0}}")
         inst.append(f"{{{v_dr},{lua_quote(part)}}}")
     inst.append(f"{{{v_et},0}}")
 
-    pool_ref = randomName(); chk_tag = lua_quote(random.choice(pool_tags))
-    op_map = randomName(); src_var = randomName(); lk_var = randomName()
-    fn_var = randomName(); ok_var = randomName(); chunk_var = randomName()
+    pool_ref = randomName()
+    chk_tag = lua_quote(random.choice(pool_tags))
+    op_map = randomName()
+    src_var = randomName()
+    lk_var = randomName()
+    fn_var = randomName()
+    ok_var = randomName()
+    chunk_var = randomName()
     corrupt_fn = randomName()
 
     vm = (
@@ -971,22 +1223,39 @@ def validate_generated_lua(lua_code: str) -> None:
     depth_paren = depth_bracket = depth_brace = 0
     for kind, val in tokens:
         if kind == "sym":
-            if val == "(": depth_paren += 1
-            elif val == ")": depth_paren -= 1
-            elif val == "[": depth_bracket += 1
-            elif val == "]": depth_bracket -= 1
-            elif val == "{": depth_brace += 1
-            elif val == "}": depth_brace -= 1
+            if val == "(":
+                depth_paren += 1
+            elif val == ")":
+                depth_paren -= 1
+            elif val == "[":
+                depth_bracket += 1
+            elif val == "]":
+                depth_bracket -= 1
+            elif val == "{":
+                depth_brace += 1
+            elif val == "}":
+                depth_brace -= 1
+        if depth_paren < 0 or depth_bracket < 0 or depth_brace < 0:
+            raise ValueError(
+                f"Negative delimiter depth: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}"
+            )
     if depth_paren != 0 or depth_bracket != 0 or depth_brace != 0:
-        raise ValueError(f"Unbalanced delimiters: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}")
+        raise ValueError(
+            f"Unbalanced delimiters: ()={depth_paren}, []={depth_bracket}, {{}}={depth_brace}"
+        )
 
 # ───────────────────────── wrapper final ─────────────────────────
 
 def wrap_final_code(code: str, pool_tags) -> str:
-    v_fn = randomName(); v_runner = randomName(); v_guard = randomName()
-    v_init = randomName(); v_chk = randomName(); v_root_ref = randomName()
+    v_fn = randomName()
+    v_runner = randomName()
+    v_guard = randomName()
+    v_init = randomName()
+    v_chk = randomName()
+    v_root_ref = randomName()
     v_gv_fn = randomName()
-    g_key = ascii_obfuscate("_G"); gv_key = ascii_obfuscate("getgenv")
+    g_key = ascii_obfuscate("_G")
+    gv_key = ascii_obfuscate("getgenv")
 
     pool_init = " ".join(
         f"if type({v_root_ref})=='table' then {v_root_ref}[{lua_quote(tag)}]=true end "
@@ -1046,14 +1315,24 @@ def wrap_final_code(code: str, pool_tags) -> str:
 # ───────────────────────── ORQUESTADOR ─────────────────────────
 
 def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
-    if not sourceCode: return "--ERROR"
+    if not sourceCode:
+        return "--ERROR"
     random.seed(seed)
 
-    v_t = randomName(); v_bx = randomName(); v_ch = randomName(); v_by = randomName()
-    v_rp = randomName(); v_tc = randomName(); v_ti = randomName(); v_fl = randomName()
-    v_rn = randomName(); v_rt = randomName(); v_dt = randomName()
+    v_t = randomName()
+    v_bx = randomName()
+    v_ch = randomName()
+    v_by = randomName()
+    v_rp = randomName()
+    v_tc = randomName()
+    v_ti = randomName()
+    v_fl = randomName()
+    v_rn = randomName()
+    v_rt = randomName()
+    v_dt = randomName()
 
     protected_names = {v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt, "_bx"}
+    reset_name_registry(protected_names)
 
     pool_tags = [generate_pool_tag() for _ in range(POOL_COUNT)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
@@ -1078,7 +1357,6 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     ]
     flattened_reg = flatten_control_flow(reg_statements, v_t)
 
-    # Protección: ejecuta primero las verificaciones, luego usa la VM estatal para el payload usuario
     vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
     vm_user = build_moonveil_state_decoder(obfuscated_user_code, v_t, v_ch, v_by, v_bx)
 
