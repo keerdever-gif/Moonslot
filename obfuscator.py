@@ -288,7 +288,7 @@ def build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn,
 
 
 def build_anti_tamper_core(pool_list_lua: str) -> str:
-    """Anti-env logger y anti-tamper refinado con corrupcion silenciosa y checks solidos."""
+    """Anti-env logger y anti-tamper con detecciones reforzadas y corte efectivo."""
     f_flag = randomName()
     f_pools = randomName()
     f_root = randomName()
@@ -297,6 +297,7 @@ def build_anti_tamper_core(pool_list_lua: str) -> str:
     f_has = randomName()
 
     chk_pools = randomName()
+    chk_globals = randomName()
     chk_hooks_dbg = randomName()
     chk_meta_coro = randomName()
     chk_env_funs = randomName()
@@ -342,6 +343,16 @@ local function {f_corrupt}()
         for k in pairs({f_pools}) do
             {f_pools}[k] = {s_junk}
         end
+        for _, key in ipairs({f_pools}) do
+            if type(key) == "string" then
+                if type({f_root}) == "table" then
+                    {f_root}[key] = nil
+                end
+                if type(_G) == "table" then
+                    _G[key] = nil
+                end
+            end
+        end
     end
 end
 
@@ -369,11 +380,41 @@ local function {chk_pools}()
     end
 end
 
+local function {chk_globals}()
+    if {f_flag} then return end
+    if type(type) ~= "function" or type(pcall) ~= "function" or type(tostring) ~= "function" then
+        {f_corrupt}()
+        return
+    end
+    if type(string) ~= "table" or type(string.char) ~= "function" or type(string.len) ~= "function" then
+        {f_corrupt}()
+        return
+    end
+    if type(table) ~= "table" or type(table.concat) ~= "function" or type(table.insert) ~= "function" then
+        {f_corrupt}()
+        return
+    end
+    if type(math) ~= "table" or type(math.floor) ~= "function" then
+        {f_corrupt}()
+        return
+    end
+    if math.floor(1.5) ~= 1 or string.len({s_c_a}) ~= 3 then
+        {f_corrupt}()
+    end
+end
+
 local function {chk_hooks_dbg}()
     if {f_flag} then return end
     if type(print) == "function" and type(tostring) == "function" then
         local _okP, ps = {f_safe}(tostring, print)
         if _okP and type(ps) == "string" and ps:match({s_hook_pat}) then
+            {f_corrupt}()
+            return
+        end
+    end
+    if type(loadstring) == "function" and type(tostring) == "function" then
+        local _okL, ls = {f_safe}(tostring, loadstring)
+        if _okL and type(ls) == "string" and ls:match({s_hook_pat}) then
             {f_corrupt}()
             return
         end
@@ -385,46 +426,47 @@ local function {chk_hooks_dbg}()
             return
         end
     end
-    {f_safe}(function()
-        if type(debug) == "table" and type(debug.getinfo) == "function" then
-            local info = debug.getinfo(function() end, {s_info_mode})
-            if type(info) ~= "table" or info.nups == nil then
-                {f_corrupt}()
-            end
+    if type(debug) == "table" and type(debug.getinfo) == "function" then
+        local okI, info = {f_safe}(debug.getinfo, function() end, {s_info_mode})
+        if not okI or type(info) ~= "table" or info.nups == nil then
+            {f_corrupt}()
         end
-    end)
+    end
 end
 
 local function {chk_meta_coro}()
     if {f_flag} then return end
-    {f_safe}(function()
-        if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
-            local co = coroutine.create(function()
-                coroutine.yield(10)
-                coroutine.yield(20)
-            end)
-            local _, v1 = coroutine.resume(co)
-            local _, v2 = coroutine.resume(co)
-            if v1 ~= 10 or v2 ~= 20 then
+    if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
+        local co = coroutine.create(function()
+            coroutine.yield(10)
+            coroutine.yield(20)
+        end)
+        local _, v1 = coroutine.resume(co)
+        local _, v2 = coroutine.resume(co)
+        if v1 ~= 10 or v2 ~= 20 then
+            {f_corrupt}()
+            return
+        end
+    end
+    if type(setmetatable) == "function" and type(getmetatable) == "function" then
+        local mt = setmetatable({{}}, {{__index = function(_, k) return tostring(k) .. "_ok" end}})
+        if mt[{s_env_k}] ~= {s_env_ok} then
+            {f_corrupt}()
+            return
+        end
+        local lockedT = setmetatable({{}}, {{__metatable = {s_env_ok}}})
+        if getmetatable(lockedT) ~= {s_env_ok} then
+            {f_corrupt}()
+            return
+        end
+        local rawT = setmetatable({{}}, {{__newindex = function() end}})
+        if type(rawset) == "function" and type(rawget) == "function" then
+            rawset(rawT, {s_val_k}, 42)
+            if rawget(rawT, {s_val_k}) ~= 42 then
                 {f_corrupt}()
-                return
             end
         end
-        if type(setmetatable) == "function" then
-            local mt = setmetatable({{}}, {{__index = function(_, k) return tostring(k) .. "_ok" end}})
-            if mt[{s_env_k}] ~= {s_env_ok} then
-                {f_corrupt}()
-                return
-            end
-            local rawT = setmetatable({{}}, {{__newindex = function() end}})
-            if type(rawset) == "function" and type(rawget) == "function" then
-                rawset(rawT, {s_val_k}, 42)
-                if rawget(rawT, {s_val_k}) ~= 42 then
-                    {f_corrupt}()
-                end
-            end
-        end
-    end)
+    end
 end
 
 local function {chk_env_funs}()
@@ -436,78 +478,74 @@ local function {chk_env_funs}()
             return
         end
     end
-    {f_safe}(function()
-        if type(debug) == "table" and type(debug.getconstants) == "function" and type(debug.setconstant) == "function" then
-            local function probeFn()
-                local a = {s_c_a}
-                return a
-            end
-            local c = debug.getconstants(probeFn)
-            local idx = nil
-            if type(c) == "table" then
-                for i, v in pairs(c) do
-                    if v == {s_c_a} then
-                        idx = i
-                        break
-                    end
-                end
-            end
-            if idx and idx > 0 then
-                local st = {f_safe}(debug.setconstant, probeFn, idx, {s_c_b})
-                if st and probeFn() == {s_c_b} then
-                    {f_corrupt}()
+    if type(debug) == "table" and type(debug.getconstants) == "function" and type(debug.setconstant) == "function" then
+        local function probeFn()
+            local a = {s_c_a}
+            return a
+        end
+        local okC, c = {f_safe}(debug.getconstants, probeFn)
+        local idx = nil
+        if okC and type(c) == "table" then
+            for i, v in pairs(c) do
+                if v == {s_c_a} then
+                    idx = i
+                    break
                 end
             end
         end
-    end)
-    {f_safe}(function()
-        if type(clonefunction) == "function" and type(hookfunction) == "function" then
-            local function probeA() return 1 end
-            local ca = clonefunction(probeA)
-            if type(ca) == "function" then
-                local st = {f_safe}(hookfunction, probeA, function() return 2 end)
-                if st and probeA() == 2 and ca() == 1 then
-                    {f_corrupt}()
-                end
+        if idx and idx > 0 then
+            local st = {f_safe}(debug.setconstant, probeFn, idx, {s_c_b})
+            if st and probeFn() == {s_c_b} then
+                {f_corrupt}()
+                return
             end
         end
-    end)
+    end
+    if type(clonefunction) == "function" and type(hookfunction) == "function" then
+        local function probeA() return 1 end
+        local okCl, ca = {f_safe}(clonefunction, probeA)
+        if okCl and type(ca) == "function" then
+            local st = {f_safe}(hookfunction, probeA, function() return 2 end)
+            if st and probeA() == 2 and ca() == 1 then
+                {f_corrupt}()
+            end
+        end
+    end
 end
 
 local function {chk_timing}()
     if {f_flag} then return end
-    {f_safe}(function()
-        if type(getgenv) == "function" and type(os) == "table" and type(task) == "table" and type(math) == "table" then
-            local c = os.clock
-            local w = task.wait
-            local m = math.sin
-            if type(c) == "function" and type(w) == "function" and type(m) == "function" then
-                local t1 = c()
-                w(0.15)
-                local t2 = c()
-                local f = t2 - t1
-                if f >= 0.14 and f < 0.8 then
-                    local a = 0
-                    local t3 = c()
-                    for i = 1, 100000 do
-                        a = a + m(i * 0.05)
-                    end
-                    local t4 = c()
-                    local d = t4 - t3
-                    if d <= 0.0001 or (type({f_root}) == "table" and {f_root}[{s_math_k}] ~= nil and type({f_root}[{s_math_k}]) ~= "table") then
-                        {f_corrupt}()
-                    end
+    if type(getgenv) == "function" and type(os) == "table" and type(task) == "table" and type(math) == "table" then
+        local c = os.clock
+        local w = task.wait
+        local m = math.sin
+        if type(c) == "function" and type(w) == "function" and type(m) == "function" then
+            local t1 = c()
+            w(0.15)
+            local t2 = c()
+            local f = t2 - t1
+            if f >= 0.14 and f < 0.8 then
+                local a = 0
+                local t3 = c()
+                for i = 1, 100000 do
+                    a = a + m(i * 0.05)
+                end
+                local t4 = c()
+                local d = t4 - t3
+                if d <= 0.0001 or (type({f_root}) == "table" and {f_root}[{s_math_k}] ~= nil and type({f_root}[{s_math_k}]) ~= "table") then
+                    {f_corrupt}()
                 end
             end
         end
-    end)
+    end
 end
 
-{f_safe}({chk_pools})
-{f_safe}({chk_hooks_dbg})
-{f_safe}({chk_meta_coro})
-{f_safe}({chk_env_funs})
-{f_safe}({chk_timing})
+{chk_pools}()
+{chk_globals}()
+{chk_hooks_dbg}()
+{chk_meta_coro}()
+{chk_env_funs}()
+{chk_timing}()
 if {f_flag} then return end
 """
 
@@ -712,6 +750,34 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfus
         else:
             out.append(val)
     return "".join(out)
+
+
+def add_extra_obfuscation_layer(code: str) -> str:
+    """Capa adicional de dispersion por fragmentos en tabla con reensamblado diferido."""
+    if not code:
+        return code
+    tbl_var = randomName()
+    idx_var = randomName()
+    out_var = randomName()
+    step = 36
+    chunks = [code[i:i + step] for i in range(0, len(code), step)]
+    order = list(range(len(chunks)))
+    random.shuffle(order)
+
+    entries = [f"[{i + 1}]={lua_quote(chunks[i])}" for i in range(len(chunks))]
+    seq_lua = ",".join(str(x + 1) for x in order)
+
+    return (
+        f"local {tbl_var}={{{','.join(entries)}}} "
+        f"local {out_var}={{}} "
+        f"for _,{idx_var} in ipairs({{{seq_lua}}})do "
+        f"if type({tbl_var}[{idx_var}])=='string' then {out_var}[{idx_var}]={tbl_var}[{idx_var}] end "
+        f"end "
+        f"local _assembled=table.concat({out_var}) "
+        f"{tbl_var}=nil {out_var}=nil "
+        f"local _fn=(type(loadstring)=='function' and loadstring)or(type(load)=='function' and load)or nil "
+        f"if type(_fn)=='function' then local _ok,_c=pcall(_fn,_assembled) if _ok and type(_c)=='function' then pcall(_c) end end "
+    )
 
 
 def minify_payload(code: str) -> str:
@@ -986,6 +1052,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     obfuscated_user_code = obfuscate_strings_and_numbers(
         obfuscated_user_code, encrypt_strings=True, obfuscate_nums=True
     )
+    layered_user_code = minify_payload(add_extra_obfuscation_layer(obfuscated_user_code))
 
     bootstrap = build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt)
     at_core = minify_payload(build_anti_tamper_core(pool_list_lua))
@@ -999,7 +1066,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     flattened_reg = flatten_control_flow(reg_statements, v_t)
 
     vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
-    vm_user = buildVMBlock(obfuscated_user_code, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
+    vm_user = buildVMBlock(layered_user_code, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
 
     mc_var = randomName()
     final_code = (
