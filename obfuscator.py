@@ -544,7 +544,7 @@ def _tokenize_lua(code: str):
             else:
                 tokens.append(("comment", code[i:j]))
                 i = j
-        elif c in '"\'':
+        elif c in ('"', "'"):
             quote = c
             j = i + 1
             while j < n:
@@ -783,6 +783,15 @@ end
 def buildVMBlock(payloadStr: str, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt) -> str:
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
+    if "(_bx(" in payloadStr:
+        bx_prelude = (
+            "local function _bx(a,b) "
+            "if type(a)~='number' or type(b)~='number' then return 0 end "
+            "if type(bit32)=='table' and type(bit32.bxor)=='function' then return bit32.bxor(a,b) end "
+            "local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
+        )
+        payloadStr = bx_prelude + payloadStr
+
     op_chunk = random.randint(10, 80)
     op_nop = random.randint(81, 160)
     op_end = random.randint(161, 240)
@@ -882,6 +891,7 @@ def wrap_final_code(code: str, pool_tags) -> str:
     v_init = randomName()
     v_chk = randomName()
     v_root_ref = randomName()
+    v_gv_fn = randomName()
     g_key = ascii_obfuscate("_G")
     gv_key = ascii_obfuscate("getgenv")
 
@@ -895,23 +905,23 @@ def wrap_final_code(code: str, pool_tags) -> str:
         for tag in pool_tags
     )
 
-    init_and_check = (
-        f"local function {v_init}() "
+    resolve_root = (
         f"local {v_root_ref}=nil "
-        f"if type(_G)=='table' and type(_G[{gv_key}])=='function' then "
-        f"local _okV,_gvV=pcall(_G[{gv_key}]) "
+        f"local {v_gv_fn}=(type(getgenv)=='function' and getgenv) or (type(_G)=='table' and type(_G[{gv_key}])=='function' and _G[{gv_key}]) or nil "
+        f"if type({v_gv_fn})=='function' then "
+        f"local _okV,_gvV=pcall({v_gv_fn}) "
         f"if _okV and type(_gvV)=='table' then {v_root_ref}=_gvV end "
         f"end "
         f"if type({v_root_ref})~='table' then {v_root_ref}=(type(_G)=='table' and type(_G[{g_key}])=='table' and _G[{g_key}]) or _G end "
+    )
+
+    init_and_check = (
+        f"local function {v_init}() "
+        f"{resolve_root}"
         f"{pool_init}"
         f"end "
         f"local function {v_chk}() "
-        f"local {v_root_ref}=nil "
-        f"if type(_G)=='table' and type(_G[{gv_key}])=='function' then "
-        f"local _okV,_gvV=pcall(_G[{gv_key}]) "
-        f"if _okV and type(_gvV)=='table' then {v_root_ref}=_gvV end "
-        f"end "
-        f"if type({v_root_ref})~='table' then {v_root_ref}=(type(_G)=='table' and type(_G[{g_key}])=='table' and _G[{g_key}]) or _G end "
+        f"{resolve_root}"
         f"{pool_checks}"
         f"if type(debug)=='table' and type(debug.gethook)=='function' then "
         f"local _ok,_hk=pcall(debug.gethook) "
