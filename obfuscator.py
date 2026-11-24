@@ -11,7 +11,6 @@ _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 POOL_COUNT = 8
 
-# Registro global de nombres para evitar colisiones entre etapas
 _GLOBAL_USED_NAMES = set(OPCODE_VARS)
 
 HEARTBEAT_TEMPLATE = """local RunService = game:GetService("RunService")
@@ -239,10 +238,6 @@ def generate_opaque_predicate() -> str:
 # ───────────────────────── macros MoonVeil-style ─────────────────────────
 
 def _extract_balanced_call(code: str, macro_name: str):
-    """
-    Busca llamadas tipo MACRO(arg1, arg2) respetando paréntesis anidados y strings.
-    Devuelve una lista de tuplas (start_idx, end_idx, inner_content).
-    """
     pattern = re.compile(rf"\b{macro_name}\s*\(")
     matches = []
     pos = 0
@@ -252,7 +247,7 @@ def _extract_balanced_call(code: str, macro_name: str):
         if not m:
             break
         start = m.start()
-        i = m.end() - 1  # apuntando a '('
+        i = m.end() - 1
         depth = 0
         in_str = None
         escape = False
@@ -593,7 +588,7 @@ local function {chk_globals}()
     if type(math) ~= "table" or type(math.floor) ~= "function" then
         {f_corrupt}() return
     end
-    if math.floor(1.5) ~= 1 or string.len({s_c_a}) ~= 3 then {f_corrupt}() end
+    if math.floor(1.5) ~= 1 or string.len({s_c_a}) ~= 3 then {f_corrupt}() return end
 end
 
 local function {chk_hooks_dbg}()
@@ -774,7 +769,7 @@ def build_moonveil_state_decoder(payload: str, v_t, v_ch, v_by, v_bx) -> str:
             if 32 <= x < 127 and x not in (34, 92):
                 out.append(chr(x))
             else:
-                out.append("\\" + str(x))
+                out.append(f"\\{x:03d}")
         return '"' + "".join(out) + '"'
 
     data_lua = to_lua_bin(enc2)
@@ -1086,14 +1081,23 @@ def minify_payload(code: str) -> str:
     block_keywords = {
         "local", "function", "return", "then", "do", "else", "elseif", "end", "until", "in"
     }
+    no_space_after = {".", ":", "(", "[", "{", ",", ";"}
+    no_space_before = {".", ":", "(", ")", "[", "]", "{", "}", ",", ";"}
+
     out = []
     for idx, (kind, tok) in enumerate(meaningful):
         out.append(tok)
         if idx < len(meaningful) - 1:
-            _, nxt = meaningful[idx + 1]
+            nxt_kind, nxt = meaningful[idx + 1]
             left_word = tok[-1].isalnum() or tok[-1] == "_"
             right_word = nxt[0].isalnum() or nxt[0] == "_"
-            if (left_word and right_word) or (tok in block_keywords and nxt not in (";", ",", ")", "]", "}")):
+            needs_space = (
+                (left_word and right_word)
+                or (tok in block_keywords and nxt not in no_space_before)
+                or (kind == "str" and nxt_kind in ("ident", "num"))
+                or (kind in ("ident", "num") and nxt_kind == "str")
+            )
+            if needs_space and tok not in no_space_after and nxt not in no_space_before:
                 out.append(" ")
     return "".join(out).strip()
 
