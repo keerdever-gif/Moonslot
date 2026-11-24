@@ -2,18 +2,56 @@ import re
 import random
 import argparse
 
-HEADER = '''--[[ This code is protected by moonslot 1.01v if you want protect your code whit real obfuscation go to https://discord.gg/ZMnTeuTZ5
+HEADER = '''--[[ This code is protected by moonslot 0.2 if you want protect your code whit real obfuscation go to https://discord.gg/ZMnTeuTZ5
 ]]\n'''
 
 ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
-ALERT_BYTES = "77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117"
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 POOL_COUNT = 8
 
+HEARTBEAT_TEMPLATE = """local RunService = game:GetService("RunService")
+local ticks = 0
+local total = 0
+local connection
 
-def hidden_alert_call() -> str:
-    return f"if _T(_er)=='function'then _er(_ch({ALERT_BYTES}),0)end "
+connection = RunService.Heartbeat:Connect(function(dt)
+    ticks = ticks + 1
+    total = total + dt
+    if ticks >= 5 then
+        connection:Disconnect()
+    end
+end)
+"""
+
+
+def _str_from_bytes(s: str) -> str:
+    raw = s.encode("utf-8")
+    if not raw:
+        return "''"
+    nums = ",".join(str(b) for b in raw)
+    return f"string.char({nums})"
+
+
+def ascii_obfuscate(s: str) -> str:
+    """Ofusca una cadena mediante codigos ASCII y expresiones aritmeticas simples."""
+    raw = s.encode("utf-8")
+    if not raw:
+        return "''"
+    parts = []
+    for b in raw:
+        mode = random.randint(0, 2)
+        if mode == 0:
+            d = random.randint(1, 35)
+            parts.append(f"({b + d}-{d})")
+        elif mode == 1 and b >= 4:
+            k = random.randint(2, 4)
+            rem = b % k
+            q = b // k
+            parts.append(f"({q}*{k}+{rem})" if rem else f"({q}*{k})")
+        else:
+            parts.append(str(b))
+    return f"string.char({','.join(parts)})"
 
 
 def generate_pool_tag() -> str:
@@ -80,22 +118,44 @@ def _decode_lua_string_literal(val: str) -> str | None:
 
 
 def encode_lua_string(s: str) -> str:
-    """Codifica una cadena en bytes decimales con clave XOR aleatoria y decodificador autónomo."""
     raw = s.encode("utf-8")
     if not raw:
         return "''"
     key = random.randint(17, 239)
-    encoded_bytes = ",".join(str(b ^ key) for b in raw)
+    half = max(1, len(raw) // 2)
+    b1 = ",".join(str(b ^ key) for b in raw[:half])
+    b2 = ",".join(str(b ^ key) for b in raw[half:])
+
+    fn_name = randomName()
+    c_fn = randomName()
+    x_fn = randomName()
+    acc = randomName()
+    item = randomName()
+    p1 = randomName()
+    r_v = randomName()
+    bit_v = randomName()
+
+    part2_loop = (
+        f"for _,{item} in ipairs({{{b2}}})do {acc}={acc}..{c_fn}({x_fn}({item},{key}))end "
+        if b2
+        else ""
+    )
+
     return (
-        f"(function()local _c=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return '' end "
-        f"local _x=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
-        f"local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
-        f"local _s=''for _,_b in ipairs({{{encoded_bytes}}})do _s=_s.._c(_x(_b,{key}))end return _s end)()"
+        f"(function()local function {fn_name}()"
+        f"local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return '' end "
+        f"local {x_fn}=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
+        f"local {r_v},{bit_v}=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then {r_v}={r_v}+{bit_v} end a=math.floor(a/2)b=math.floor(b/2){bit_v}={bit_v}*2 end return {r_v} end "
+        f"local {acc}='' "
+        f"local {p1}={{{b1}}} "
+        f"for _,{item} in ipairs({p1})do {acc}={acc}..{c_fn}({x_fn}({item},{key}))end "
+        f"{part2_loop}"
+        f"{p1}=nil "
+        f"return {acc} end return {fn_name}() end)()"
     )
 
 
 def obfuscate_number(n: int) -> str:
-    """Reemplaza un literal numérico entero por una expresión aritmética ofuscada."""
     mode = random.randint(0, 3)
     if mode == 0:
         a = random.randint(10, 999)
@@ -116,40 +176,143 @@ def obfuscate_number(n: int) -> str:
         return f"(_bx({n ^ x},{x}))"
 
 
-BOOTSTRAP_HELPERS = (
-    "local _T=type "
-    "local _bx=(type(bit32)=='table'and type(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
-    "local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
-    "local _ch=(type(string)=='table'and type(string.char)=='function')and string.char or function(x)return''end "
-    "local _by=(type(string)=='table'and type(string.byte)=='function')and string.byte or function(s,i)return 0 end "
-    "local _rp=(type(string)=='table'and type(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..s end return o end "
-    "local _tc=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or''end "
-    "local _ti=(type(table)=='table'and type(table.insert)=='function')and table.insert or function(t,v)t[#t+1]=v end "
-    "local _fl=(type(math)=='table'and type(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
-    "local _rn=(type(math)=='table'and type(math.random)=='function')and math.random or function(a,b)return a or 0 end "
-    "local _er=type(error)=='function'and error or function()end "
-    "local _RT=(getgenv and _T(getgenv)=='function')and getgenv()or _G "
-    "local _b64d=function(data)"
-    "local b='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'"
-    "data=string.gsub(data,'[^'..b..'=]','')"
-    "return(data:gsub('.',function(x)"
-    "if x=='=' then return''end "
-    "local r,f='',(b:find(x,1,true)-1)"
-    "for i=6,1,-1 do r=r..(f%2^i-f%2^(i-1)>0 and '1' or '0')end return r "
-    "end):gsub('%d%d%d?%d?%d?%d?%d?%d?',function(x)"
-    "if #x~=8 then return''end "
-    "local c=0 for i=1,8 do c=c+(x:sub(i,i)=='1' and 2^(8-i) or 0)end return _ch(c)end))"
-    "end "
-    "local _DT={} "
-)
+def randomName(used_names: set[str] | None = None) -> str:
+    while True:
+        cand = (
+            "_"
+            + random.choice("abcdefghijklmnopqrstuvwxyz")
+            + "".join(random.choice(_BASE36) for _ in range(random.randint(2, 4)))
+            + str(random.randint(10, 999))
+        )
+        if not used_names or cand not in used_names:
+            if used_names is not None:
+                used_names.add(cand)
+            return cand
 
-ANTI_TAMPER_CORE = r'''
-local _tampered = false
-local _pool_list = __POOL_LIST_PLACEHOLDER__
-local _root = (getgenv and type(getgenv) == "function") and getgenv() or _G
-local _msg = (type(string) == "table" and type(string.char) == "function") and string.char(77,111,111,110,115,108,111,116,32,100,101,116,101,99,116,32,121,111,117) or "err"
 
-local function _safe_call(fn, ...)
+def generate_opaque_predicate() -> str:
+    r = random.randint(1, 99)
+    return f"(_bx({r},{r})==0)"
+
+
+def apply_moonveil_style_macros(code: str) -> str:
+    """Procesa macros estilo MoonVeil (MS_* y MV_*) antes de ofuscar."""
+    code = re.sub(r"\b(?:MS|MV)_OMIT\s*\([^)]*\)\s*;?", "", code)
+    code = re.sub(r"\b(?:MS|MV)_OMIT\b[^\n]*", "", code)
+
+    code = re.sub(r"\b(?:MS|MV)_CRASH\s*\(\s*\)", "return", code)
+
+    def _line_repl(match: re.Match) -> str:
+        line_no = code[: match.start()].count("\n") + 1
+        return obfuscate_number(line_no)
+
+    code = re.sub(r"\b(?:MS|MV)_LINE\s*\(\s*\)", _line_repl, code)
+
+    code = re.sub(
+        r"\b(?:MS|MV)_OPAQUE\s*\(\s*([^)]*)\s*\)",
+        lambda m: f"({generate_opaque_predicate()} and ({m.group(1).strip() or 'true'}))"
+        if m.group(1).strip()
+        else generate_opaque_predicate(),
+        code,
+    )
+
+    code = re.sub(
+        r"\b(?:MS|MV)_ASSUME\s*\(\s*([^)]+)\s*\)",
+        lambda m: f"if not ({m.group(1).strip()}) then return end",
+        code,
+    )
+
+    code = re.sub(
+        r"\b(?:MS|MV)_PRECHECK\s*\(\s*\)",
+        "if type(game)~='userdata' and type(game)~='table' then return end",
+        code,
+    )
+
+    code = re.sub(
+        r"\b(?:MS|MV)_REWRITE\s*\(\s*([^)]+)\s*\)",
+        lambda m: f"(function()return ({m.group(1).strip()})end)()",
+        code,
+    )
+
+    code = re.sub(
+        r"\b(?:MS|MV)_ENC_FUNC\s*\(\s*(function\b.*?\bend)\s*\)",
+        lambda m: f"(function(...)return ({m.group(1).strip()})(...)end)",
+        code,
+    )
+
+    def _enc_str_repl(match: re.Match) -> str:
+        raw_arg = match.group(1).strip()
+        dec = _decode_lua_string_literal(raw_arg)
+        if dec is not None:
+            return encode_lua_string(dec)
+        return raw_arg
+
+    code = re.sub(r"\b(?:MS|MV)_ENC_STR\s*\(\s*([^)]+)\s*\)", _enc_str_repl, code)
+
+    code = re.sub(
+        r"\b(?:MS|MV)_INDEX_TO_NUM\s*\(\s*([^,\s]+)\s*,\s*([^)]+)\s*\)",
+        lambda m: f"{m.group(1).strip()}[{obfuscate_number(int(m.group(2).strip())) if m.group(2).strip().isdigit() else m.group(2).strip()}]",
+        code,
+    )
+
+    code = re.sub(
+        r"\b(?:MS|MV)_(?:INLINE|VM|CFF|COMPRESS|OBFUSCATED)\s*\(\s*([^)]*)\s*\)",
+        lambda m: m.group(1).strip() if m.group(1).strip() else "",
+        code,
+    )
+
+    code = re.sub(r"\bATTRIBUTE\s*\([^)]*\)", "", code)
+    return code
+
+
+def build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt) -> str:
+    return (
+        f"local {v_t}=type "
+        f"local {v_bx}=({v_t}(bit32)=='table'and {v_t}(bit32.bxor)=='function')and bit32.bxor or function(a,b)"
+        f"local r,p=0,1 while a>0 or b>0 do if(a%2)~=(b%2)then r=r+p end a=math.floor(a/2)b=math.floor(b/2)p=p*2 end return r end "
+        f"local {v_ch}=({v_t}(string)=='table'and {v_t}(string.char)=='function')and string.char or function()return''end "
+        f"local {v_by}=({v_t}(string)=='table'and {v_t}(string.byte)=='function')and string.byte or function()return 0 end "
+        f"local {v_rp}=({v_t}(string)=='table'and {v_t}(string.rep)=='function')and string.rep or function(s,n)local o=''for _=1,n do o=o..s end return o end "
+        f"local {v_tc}=({v_t}(table)=='table'and {v_t}(table.concat)=='function')and table.concat or function(t)return table.concat and table.concat(t)or''end "
+        f"local {v_ti}=({v_t}(table)=='table'and {v_t}(table.insert)=='function')and table.insert or function(t,v)t[#t+1]=v end "
+        f"local {v_fl}=({v_t}(math)=='table'and {v_t}(math.floor)=='function')and math.floor or function(x)return x-(x%1)end "
+        f"local {v_rn}=({v_t}(math)=='table'and {v_t}(math.random)=='function')and math.random or function(a)return a or 0 end "
+        f"local {v_rt}=(getgenv and {v_t}(getgenv)=='function')and getgenv()or _G "
+        f"local {v_dt}={{}} "
+    )
+
+
+def build_anti_tamper_core(pool_list_lua: str) -> str:
+    """Anti-env logger y anti-tamper refinado con corrupcion silenciosa y checks solidos."""
+    f_flag = randomName()
+    f_pools = randomName()
+    f_root = randomName()
+    f_safe = randomName()
+    f_corrupt = randomName()
+    f_has = randomName()
+
+    chk_pools = randomName()
+    chk_hooks_dbg = randomName()
+    chk_meta_coro = randomName()
+    chk_env_funs = randomName()
+    chk_timing = randomName()
+
+    s_hook_pat = ascii_obfuscate("^function: 0x0000")
+    s_info_mode = ascii_obfuscate("u")
+    s_c_a = ascii_obfuscate("cat")
+    s_c_b = ascii_obfuscate("dog")
+    s_math_k = ascii_obfuscate("math")
+    s_env_ok = ascii_obfuscate("env_ok")
+    s_env_k = ascii_obfuscate("env")
+    s_val_k = ascii_obfuscate("val")
+    s_junk = ascii_obfuscate("x9z_corrupt")
+
+    return f"""
+local {f_flag} = false
+local {f_pools} = {pool_list_lua}
+local {f_root} = (getgenv and type(getgenv) == "function") and getgenv() or _G
+
+local function {f_safe}(fn, ...)
     if type(fn) ~= "function" then
         return false, nil
     end
@@ -159,18 +322,17 @@ local function _safe_call(fn, ...)
     return true, fn(...)
 end
 
-local function _dtc()
-    _tampered = true
-    if type(_root) == "table" then
-        _root._tampered = true
-    end
-    if type(error) == "function" then
-        error(_msg, 0)
+local function {f_corrupt}()
+    {f_flag} = true
+    if type({f_pools}) == "table" then
+        for k in pairs({f_pools}) do
+            {f_pools}[k] = {s_junk}
+        end
     end
 end
 
-local function _has_pool(key)
-    if type(_root) == "table" and _root[key] == true then
+local function {f_has}(key)
+    if type({f_root}) == "table" and {f_root}[key] == true then
         return true
     end
     if type(_G) == "table" and _G[key] == true then
@@ -179,93 +341,48 @@ local function _has_pool(key)
     return false
 end
 
-local function _check_pools()
-    if type(_pool_list) ~= "table" or #_pool_list < 8 then
-        _dtc()
+local function {chk_pools}()
+    if {f_flag} then return end
+    if type({f_pools}) ~= "table" or #{f_pools} < 8 then
+        {f_corrupt}()
+        return
     end
-    for _, key in ipairs(_pool_list) do
-        if not _has_pool(key) then
-            _dtc()
+    for _, key in ipairs({f_pools}) do
+        if not {f_has}(key) then
+            {f_corrupt}()
+            return
         end
     end
 end
 
-local function _check_spy_and_loggers()
-    _safe_call(function()
-        if type(_root) == "table" then
-            if type(rawget) == "function" and rawget(_root, "Spy") ~= nil then
-                _dtc()
-            end
-            for k, v in pairs(_root) do
-                local ks = tostring(k):lower()
-                if type(v) == "function" and (ks:find("spy", 1, true) or ks:find("remotespy", 1, true) or ks:find("httplog", 1, true)) then
-                    _dtc()
-                end
-            end
-        end
-        if _G and type(rawget) == "function" and rawget(_G, "Spy") ~= nil then
-            _dtc()
-        end
-    end)
-end
-
-local function _check_print_and_debug()
+local function {chk_hooks_dbg}()
+    if {f_flag} then return end
     if type(print) == "function" and type(tostring) == "function" then
         local ps = tostring(print)
-        if type(ps) == "string" and ps:match("^function: 0x0000") then
-            _dtc()
+        if type(ps) == "string" and ps:match({s_hook_pat}) then
+            {f_corrupt}()
+            return
         end
     end
     if type(debug) == "table" and type(debug.gethook) == "function" then
-        local ok, hk = _safe_call(debug.gethook)
+        local ok, hk = {f_safe}(debug.gethook)
         if ok and hk ~= nil then
-            _dtc()
+            {f_corrupt}()
+            return
         end
     end
-    _safe_call(function()
+    {f_safe}(function()
         if type(debug) == "table" and type(debug.getinfo) == "function" then
-            local info = debug.getinfo(function() end, "u")
+            local info = debug.getinfo(function() end, {s_info_mode})
             if type(info) ~= "table" or info.nups == nil then
-                _dtc()
+                {f_corrupt}()
             end
         end
     end)
 end
 
-local function _check_string_char_and_buffer()
-    local okChar, resChar = _safe_call(string.char, nil)
-    if okChar and resChar == "" then
-        _dtc()
-    end
-    if type(buffer) == "table" and type(buffer.fromstring) == "function" then
-        _safe_call(function()
-            local str = "moonslot_env_check"
-            local buf = buffer.fromstring(str)
-            local okSvc, svc = _safe_call(function() return game:GetService("EncodingService") end)
-            if okSvc and type(typeof) == "function" and typeof(svc) == "Instance" then
-                local okComp, comp = _safe_call(function()
-                    local e = svc:CompressBuffer(buf, Enum.CompressionAlgorithm.Zstd, 1)
-                    local d = svc:DecompressBuffer(e, Enum.CompressionAlgorithm.Zstd)
-                    return buffer.tostring(d) == str
-                end)
-                if not okComp or not comp then
-                    _dtc()
-                end
-            end
-        end)
-    end
-end
-
-local function _check_server_service()
-    local ok = _safe_call(function()
-        local _ = game:GetService("ServerScriptService"):GetChildren()
-    end)
-    if ok then
-        _dtc()
-    end
-end
-
-local function _check_coroutine_and_metatables()
+local function {chk_meta_coro}()
+    if {f_flag} then return end
     if type(coroutine) == "table" and type(coroutine.create) == "function" and type(coroutine.resume) == "function" then
         local co = coroutine.create(function()
             coroutine.yield(10)
@@ -274,85 +391,70 @@ local function _check_coroutine_and_metatables()
         local _, v1 = coroutine.resume(co)
         local _, v2 = coroutine.resume(co)
         if v1 ~= 10 or v2 ~= 20 then
-            _dtc()
+            {f_corrupt}()
+            return
         end
     end
-    local mt = setmetatable({}, {__index = function(_, k) return tostring(k) .. "_ok" end})
-    if mt["env"] ~= "env_ok" then
-        _dtc()
+    local mt = setmetatable({{}}, {{__index = function(_, k) return tostring(k) .. "_ok" end}})
+    if mt[{s_env_k}] ~= {s_env_ok} then
+        {f_corrupt}()
+        return
     end
-    local rawT = setmetatable({}, {__newindex = function() end})
+    local rawT = setmetatable({{}}, {{__newindex = function() end}})
     if type(rawset) == "function" and type(rawget) == "function" then
-        rawset(rawT, "val", 42)
-        if rawget(rawT, "val") ~= 42 then
-            _dtc()
+        rawset(rawT, {s_val_k}, 42)
+        if rawget(rawT, {s_val_k}) ~= 42 then
+            {f_corrupt}()
         end
     end
-    _safe_call(function()
-        local a = game:GetService("Players")
-        local b = game:GetService("Players")
-        if a ~= b then
-            _dtc()
-        end
-    end)
-    _safe_call(function()
-        local obj = Instance.new("Part")
-        obj.Parent = workspace
-        obj:Destroy()
-        if obj.Parent ~= nil then
-            _dtc()
-        end
-    end)
-    _safe_call(function()
-        local s = Instance.new("Sound")
-        local okLoud = _safe_call(function() s.PlaybackLoudness = 5 end)
-        if okLoud then
-            s:Destroy()
-            _dtc()
-        end
-        s:Destroy()
-    end)
 end
 
-local function _check_debug_constants_and_hooks()
-    _safe_call(function()
+local function {chk_env_funs}()
+    if {f_flag} then return end
+    local okChar, resChar = {f_safe}(string.char, nil)
+    if okChar and resChar == "" then
+        {f_corrupt}()
+        return
+    end
+    {f_safe}(function()
         if type(debug) == "table" and type(debug.getconstants) == "function" and type(debug.setconstant) == "function" then
             local function probeFn()
-                local a = "cat"
+                local a = {s_c_a}
                 return a
             end
             local c = debug.getconstants(probeFn)
             local idx = nil
             if type(c) == "table" then
                 for i, v in pairs(c) do
-                    if v == "cat" then
+                    if v == {s_c_a} then
                         idx = i
                         break
                     end
                 end
             end
             if idx and idx > 0 then
-                local st = _safe_call(debug.setconstant, probeFn, idx, "dog")
-                if st and probeFn() == "dog" then
-                    _dtc()
+                local st = {f_safe}(debug.setconstant, probeFn, idx, {s_c_b})
+                if st and probeFn() == {s_c_b} then
+                    {f_corrupt}()
                 end
             end
         end
     end)
-    _safe_call(function()
+    {f_safe}(function()
         if type(clonefunction) == "function" and type(hookfunction) == "function" then
             local function probeA() return 1 end
             local ca = clonefunction(probeA)
-            local st = _safe_call(hookfunction, probeA, function() return 2 end)
+            local st = {f_safe}(hookfunction, probeA, function() return 2 end)
             if st and probeA() == 2 and ca() == 1 then
-                _dtc()
+                {f_corrupt}()
             end
         end
     end)
 end
 
-local function _check_timing_and_env()
-    _safe_call(function()
+local function {chk_timing}()
+    if {f_flag} then return end
+    {f_safe}(function()
         if type(getgenv) == "function" then
             local c = os.clock
             local w = task and task.wait
@@ -370,8 +472,8 @@ local function _check_timing_and_env()
                     end
                     local t4 = c()
                     local d = t4 - t3
-                    if d <= 0.0001 or (type(_root) == "table" and _root.math ~= nil and type(_root.math) ~= "table") then
-                        _dtc()
+                    if d <= 0.0001 or (type({f_root}) == "table" and {f_root}[{s_math_k}] ~= nil and type({f_root}[{s_math_k}]) ~= "table") then
+                        {f_corrupt}()
                     end
                 end
             end
@@ -379,37 +481,16 @@ local function _check_timing_and_env()
     end)
 end
 
-_safe_call(_check_pools)
-_safe_call(_check_spy_and_loggers)
-_safe_call(_check_print_and_debug)
-_safe_call(_check_string_char_and_buffer)
-_safe_call(_check_server_service)
-_safe_call(_check_coroutine_and_metatables)
-_safe_call(_check_debug_constants_and_hooks)
-_safe_call(_check_timing_and_env)
-'''
+{f_safe}({chk_pools})
+{f_safe}({chk_hooks_dbg})
+{f_safe}({chk_meta_coro})
+{f_safe}({chk_env_funs})
+{f_safe}({chk_timing})
+if {f_flag} then return end
+"""
 
 
-def randomName(used_names: set[str] | None = None) -> str:
-    while True:
-        cand = (
-            "_"
-            + random.choice("abcdefghijklmnopqrstuvwxyz")
-            + "".join(random.choice(_BASE36) for _ in range(random.randint(1, 3)))
-            + str(random.randint(0, 99))
-        )
-        if not used_names or cand not in used_names:
-            if used_names is not None:
-                used_names.add(cand)
-            return cand
-
-
-def generate_opaque_predicate() -> str:
-    r = random.randint(1, 99)
-    return f"(_bx({r},{r})==0)"
-
-
-def build22kBlock(pool_tags) -> str:
+def build22kBlock(pool_tags, v_t, v_rt) -> str:
     tbl = randomName()
     soup = [f"local {tbl}={{}}"]
     target_chars = 2880
@@ -419,7 +500,7 @@ def build22kBlock(pool_tags) -> str:
         k_idx = random.randint(1, 9999)
         sval = "".join(random.choice(_BASE36) for _ in range(random.randint(14, 34)))
         pred = generate_opaque_predicate()
-        guarded = f"if _T(_RT)=='table' and _RT[{tag}]~=true then _tampered=true {hidden_alert_call()} end "
+        guarded = f"if {v_t}({v_rt})=='table' and {v_rt}[{tag}]~=true then return end "
         soup.append(f"if {pred} then {guarded}local {v}='{sval}' {tbl}[{k_idx}]={v} end ")
     soup.append(f"{tbl}=nil ")
     return "".join(soup)
@@ -497,7 +578,7 @@ def _tokenize_lua(code: str):
     return tokens
 
 
-def obfuscate_identifiers(code: str) -> str:
+def obfuscate_identifiers(code: str, protected_names: set[str]) -> str:
     keywords = {
         "and", "break", "do", "else", "elseif", "end", "false", "for", "function",
         "if", "in", "local", "nil", "not", "or", "repeat", "return", "then", "true",
@@ -506,10 +587,11 @@ def obfuscate_identifiers(code: str) -> str:
         "ipairs", "pairs", "next", "tostring", "rawget", "rawset", "setmetatable",
         "getmetatable", "typeof", "coroutine", "buffer", "os", "Instance", "workspace",
         "clonefunction", "hookfunction", "collectgarbage", "gethui", "UDim2", "Color3",
-        "_G", "_RT", "_DT", "_b64d", "_tampered", "Spy",
-        "_T", "_bx", "_ch", "_by", "_rp", "_tc", "_ti", "_fl", "_rn", "_er",
+        "_G", "Enum",
     }
     keywords.update(OPCODE_VARS)
+    keywords.update(protected_names)
+
     tokens = _tokenize_lua(code)
     local_vars = set()
     used_names = set(keywords)
@@ -551,7 +633,6 @@ def obfuscate_identifiers(code: str) -> str:
 
 
 def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfuscate_nums: bool = True) -> str:
-    """Cifra cadenas literales (excepto claves de tabla directas) y ofusca constantes numéricas enteras."""
     tokens = _tokenize_lua(code)
     out = []
     for idx, (kind, val) in enumerate(tokens):
@@ -573,7 +654,10 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfus
 
             decoded = _decode_lua_string_literal(val)
             if decoded is not None and 0 < len(decoded) <= 128:
-                out.append(encode_lua_string(decoded))
+                if len(decoded) <= 12:
+                    out.append(ascii_obfuscate(decoded))
+                else:
+                    out.append(encode_lua_string(decoded))
                 continue
             out.append(val)
         elif kind == "num" and obfuscate_nums:
@@ -617,12 +701,12 @@ def minify_payload(code: str) -> str:
     return "".join(out).strip()
 
 
-def flatten_control_flow(statements: list[str]) -> str:
-    """Envuelve una lista de sentencias en una máquina de estados con while y dispatch table."""
+def flatten_control_flow(statements: list[str], v_t) -> str:
     if not statements:
         return ""
     state_var = randomName()
     dispatch_tbl = randomName()
+    fn_slot = randomName()
     states = [random.randint(1000, 99999) for _ in range(len(statements) + 1)]
     shuffled_indices = list(range(len(statements)))
     random.shuffle(shuffled_indices)
@@ -643,32 +727,33 @@ def flatten_control_flow(statements: list[str]) -> str:
         f"local {state_var}={init_state} "
         f"local {dispatch_tbl}={{{','.join(entries)}}} "
         f"while {state_var}~={end_state} do "
-        f"local _fn={dispatch_tbl}[{state_var}] "
-        f"if _T(_fn)=='function' then _fn() else {state_var}={end_state} end "
-        f"end "
+        f"local {fn_slot}={dispatch_tbl}[{state_var}] "
+        f"if {v_t}({fn_slot})=='function' then {fn_slot}() else {state_var}={end_state} end "
+        f"end {dispatch_tbl}=nil "
     )
 
 
 def getExtraProtections(pool_tags) -> str:
+    s_mt = ascii_obfuscate("locked")
+    s_chk = ascii_obfuscate("a")
     checks = "\n".join(
-        f'    if type(_RT) == "table" and _RT[{lua_quote(tag)}] ~= true and (type(_G) ~= "table" or _G[{lua_quote(tag)}] ~= true) then if type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end end'
+        f'    if type(getgenv) == "function" and type(getgenv()) == "table" and getgenv()[{lua_quote(tag)}] ~= true and (type(_G) ~= "table" or _G[{lua_quote(tag)}] ~= true) then return end'
         for tag in pool_tags
     )
     return f"""
 if type(pcall) == "function" then
     pcall(function()
 {checks}
-        if math.floor(1.5) ~= 1 and type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end
-        if string.len("a") ~= 1 and type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end
-        local t = setmetatable({{}}, {{__metatable = "locked"}})
-        if getmetatable(t) ~= "locked" and type(error) == "function" then error(string.char({ALERT_BYTES}), 0) end
+        if math.floor(1.5) ~= 1 then return end
+        if string.len({s_chk}) ~= 1 then return end
+        local t = setmetatable({{}}, {{__metatable = {s_mt}}})
+        if getmetatable(t) ~= {s_mt} then return end
     end)
 end
 """
 
 
-def buildVMBlock(payloadStr: str, pool_tags) -> str:
-    """Bucle principal de ejecución de instrucciones de la VM con despacho de opcodes."""
+def buildVMBlock(payloadStr: str, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt) -> str:
     v_dr, v_mn, v_et, v_gh, v_ty, v_ui, v_op, v_vu, v_bn, v_jg, v_ka, v_yh = OPCODE_VARS
 
     op_chunk = random.randint(10, 80)
@@ -685,42 +770,52 @@ def buildVMBlock(payloadStr: str, pool_tags) -> str:
         inst.append(f"{{{v_dr},{lua_quote(part)}}}")
     inst.append(f"{{{v_et},0}}")
 
-    POOL_REF = randomName()
-    CHK_TAG = lua_quote(random.choice(pool_tags))
-    OP_MAP = randomName()
+    pool_ref = randomName()
+    chk_tag = lua_quote(random.choice(pool_tags))
+    op_map = randomName()
+    src_var = randomName()
+    lk_var = randomName()
+    fn_var = randomName()
+    ok_var = randomName()
+    chunk_var = randomName()
+    corrupt_fn = randomName()
 
     vm = (
         f"local {v_dr}={op_chunk} local {v_mn}={op_nop} local {v_et}={op_end} "
         f"local {v_gh}=1 local {v_ty}={{}} local {v_ui}=0 local {v_op}=0 local {v_vu}=nil "
-        f"local {v_bn}=_T(_RT)=='table' and _RT or _G "
-        f"local {v_jg}={CHK_TAG} "
+        f"local {v_bn}={v_t}({v_rt})=='table' and {v_rt} or _G "
+        f"local {v_jg}={chk_tag} "
         f"local {v_ka}={{[{v_dr}]={v_dr},[{v_mn}]={v_mn},[{v_et}]={v_et}}} "
         f"local {v_yh}={{{','.join(inst)}}} "
-        f"local {POOL_REF}={v_bn} "
-        f"if _T({POOL_REF})=='table' and {POOL_REF}[{v_jg}]==nil then {hidden_alert_call()} end "
+        f"local {pool_ref}={v_bn} "
+        f"local function {corrupt_fn}() if {v_t}({v_ty})=='table' then for k in pairs({v_ty})do {v_ty}[k]=nil end end {v_ty}=nil {v_yh}=nil end "
+        f"if {v_t}({pool_ref})=='table' and {pool_ref}[{v_jg}]~=true then {corrupt_fn}() return end "
         f"while {v_gh}<=#{v_yh} do "
-        f"if _T({POOL_REF})=='table' and {POOL_REF}[{v_jg}]~=true then {hidden_alert_call()} break end "
-        f"local {OP_MAP}={v_yh}[{v_gh}] "
-        f"{v_op},{v_vu}={OP_MAP}[1],{OP_MAP}[2] "
-        f"if {v_op}=={v_ka}[{v_dr}] and _T({v_vu})=='string' then "
-        f"_ti({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
+        f"if {v_t}({pool_ref})=='table' and {pool_ref}[{v_jg}]~=true then {corrupt_fn}() return end "
+        f"local {op_map}={v_yh}[{v_gh}] "
+        f"{v_op},{v_vu}={op_map}[1],{op_map}[2] "
+        f"if {v_op}=={v_ka}[{v_dr}] and {v_t}({v_vu})=='string' then "
+        f"{v_ti}({v_ty},{v_vu}) {v_ui}={v_ui}+1 "
         f"elseif {v_op}=={v_ka}[{v_et}] then break end "
         f"{v_gh}={v_gh}+1 end "
-        f"local _src=_tc({v_ty}) {v_ty}=nil "
+        f"local {src_var}={v_tc}({v_ty}) {v_ty}=nil {v_yh}=nil "
     )
 
     ls_chars = ",".join(str(ord(c)) for c in "loadstring")
+    ld_chars = ",".join(str(ord(c)) for c in "load")
     vm += (
-        f"if _T({POOL_REF})=='table' and {POOL_REF}[{v_jg}]==true and _T(_src)=='string' and #_src>0 then "
-        f"local _lk=_ch({ls_chars}) "
-        f"local _fn=(_T({POOL_REF})=='table' and _T({POOL_REF}[_lk])=='function' and {POOL_REF}[_lk])"
-        f"or (_T(loadstring)=='function' and loadstring)"
-        f"or (_T({POOL_REF})=='table' and _T({POOL_REF}.load)=='function' and {POOL_REF}.load)"
-        f"or (_T(load)=='function' and load)or nil "
-        f"if _T(_fn)=='function' then "
-        f"local _ok,_chunk=pcall(_fn,_src) "
-        f"if _ok and _T(_chunk)=='function' then pcall(_chunk) end "
+        f"if {v_t}({pool_ref})=='table' and {pool_ref}[{v_jg}]==true and {v_t}({src_var})=='string' and #{src_var}>0 then "
+        f"local {lk_var}={v_ch}({ls_chars}) "
+        f"local {fn_var}=({v_t}({pool_ref})=='table' and {v_t}({pool_ref}[{lk_var}])=='function' and {pool_ref}[{lk_var}])"
+        f"or ({v_t}(loadstring)=='function' and loadstring)"
+        f"or ({v_t}({pool_ref})=='table' and {v_t}({pool_ref}[{v_ch}({ld_chars})])=='function' and {pool_ref}[{v_ch}({ld_chars})])"
+        f"or ({v_t}(load)=='function' and load)or nil "
+        f"if {v_t}({fn_var})=='function' then "
+        f"local {ok_var},{chunk_var}=pcall({fn_var},{src_var}) "
+        f"if {ok_var} and {v_t}({chunk_var})=='function' then pcall({chunk_var}) end "
+        f"{chunk_var}=nil "
         f"end "
+        f"{src_var}=nil "
         f"end "
     )
     return vm
@@ -752,13 +847,14 @@ def validate_generated_lua(lua_code: str) -> None:
 
 
 def wrap_final_code(code: str, pool_tags) -> str:
-    """Envuelve el código final sincronizando los 8 pools en _RT y _G antes de validar."""
     v_fn = randomName()
     v_runner = randomName()
     v_guard = randomName()
     v_init = randomName()
     v_chk = randomName()
     v_root_ref = randomName()
+    g_key = ascii_obfuscate("_G")
+    gv_key = ascii_obfuscate("getgenv")
 
     pool_init = " ".join(
         f"if type({v_root_ref})=='table' then {v_root_ref}[{lua_quote(tag)}]=true end "
@@ -766,31 +862,27 @@ def wrap_final_code(code: str, pool_tags) -> str:
         for tag in pool_tags
     )
     pool_checks = " ".join(
-        f"if (type({v_root_ref})~='table' or {v_root_ref}[{lua_quote(tag)}]~=true) and (type(_G)~='table' or _G[{lua_quote(tag)}]~=true) then "
-        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end end "
+        f"if (type({v_root_ref})~='table' or {v_root_ref}[{lua_quote(tag)}]~=true) and (type(_G)~='table' or _G[{lua_quote(tag)}]~=true) then return false end "
         for tag in pool_tags
     )
 
     init_and_check = (
         f"local function {v_init}() "
-        f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
+        f"local {v_root_ref}=({gv_key} and type(_G[{gv_key}])=='function')and _G[{gv_key}]()or _G[{g_key}] or _G "
         f"{pool_init}"
         f"end "
         f"local function {v_chk}() "
-        f"local {v_root_ref}=(getgenv and type(getgenv)=='function')and getgenv()or _G "
+        f"local {v_root_ref}=({gv_key} and type(_G[{gv_key}])=='function')and _G[{gv_key}]()or _G[{g_key}] or _G "
         f"{pool_checks}"
         f"if type(debug)=='table' and type(debug.gethook)=='function' then "
         f"local _ok,_hk=pcall(debug.gethook) "
-        f"if _ok and _hk~=nil then "
-        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end "
-        f"end "
+        f"if _ok and _hk~=nil then return false end "
         f"end "
         f"if type(print)=='function' and type(tostring)=='function' then "
         f"local _ps=tostring(print) "
-        f"if type(_ps)=='string' and _ps:match('^function: 0x0000') then "
-        f"if type(error)=='function'then error(string.char({ALERT_BYTES}),0)end "
+        f"if type(_ps)=='string' and _ps:match({ascii_obfuscate('^function: 0x0000')}) then return false end "
         f"end "
-        f"end "
+        f"return true "
         f"end "
     )
 
@@ -801,7 +893,7 @@ def wrap_final_code(code: str, pool_tags) -> str:
         f"if {v_guard} then return end "
         f"{v_guard}=true "
         f"{v_init}() "
-        f"{v_chk}() "
+        f"if not {v_chk}() then return end "
         f"{code} "
         f"end "
         f"local {v_runner}=function() return {v_fn}() end "
@@ -815,32 +907,49 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
         return "--ERROR"
     random.seed(seed)
 
+    v_t = randomName()
+    v_bx = randomName()
+    v_ch = randomName()
+    v_by = randomName()
+    v_rp = randomName()
+    v_tc = randomName()
+    v_ti = randomName()
+    v_fl = randomName()
+    v_rn = randomName()
+    v_rt = randomName()
+    v_dt = randomName()
+
+    protected_names = {v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt}
+
     pool_tags = [generate_pool_tag() for _ in range(POOL_COUNT)]
     pool_list_lua = "{" + ",".join(lua_quote(t) for t in pool_tags) + "}"
 
-    minified_user_code = minify_payload(sourceCode)
-    obfuscated_user_code = obfuscate_identifiers(minified_user_code)
+    macro_processed = apply_moonveil_style_macros(sourceCode)
+    minified_user_code = minify_payload(macro_processed)
+    obfuscated_user_code = obfuscate_identifiers(minified_user_code, protected_names)
     obfuscated_user_code = obfuscate_strings_and_numbers(
         obfuscated_user_code, encrypt_strings=True, obfuscate_nums=True
     )
 
-    at_core = minify_payload(ANTI_TAMPER_CORE.replace("__POOL_LIST_PLACEHOLDER__", pool_list_lua))
+    bootstrap = build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt)
+    at_core = minify_payload(build_anti_tamper_core(pool_list_lua))
     extra_prots = minify_payload(getExtraProtections(pool_tags))
-    filler_22k = "".join(build22kBlock(pool_tags) for _ in range(max(1, repeat_22k)))
+    filler_22k = "".join(build22kBlock(pool_tags, v_t, v_rt) for _ in range(max(1, repeat_22k)))
 
     reg_statements = [
-        f"if _T(_RT)=='table'then _RT[{lua_quote(tag)}]=true end if type(_G)=='table'then _G[{lua_quote(tag)}]=true end"
+        f"if {v_t}({v_rt})=='table'then {v_rt}[{lua_quote(tag)}]=true end if type(_G)=='table'then _G[{lua_quote(tag)}]=true end"
         for tag in pool_tags
     ]
-    flattened_reg = flatten_control_flow(reg_statements)
+    flattened_reg = flatten_control_flow(reg_statements, v_t)
 
-    vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags)
-    vm_user = buildVMBlock(obfuscated_user_code, pool_tags)
+    vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
+    vm_user = buildVMBlock(obfuscated_user_code, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
 
+    mc_var = randomName()
     final_code = (
-        f"{BOOTSTRAP_HELPERS}"
-        f"local _mc={{}}for i=1,360 do _mc[i]=_rp('X',24)end _mc=nil "
-        f"if _T(collectgarbage)=='function'then if _T(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
+        f"{bootstrap}"
+        f"local {mc_var}={{}}for _i=1,360 do {mc_var}[_i]={v_rp}('X',24)end {mc_var}=nil "
+        f"if {v_t}(collectgarbage)=='function'then if {v_t}(pcall)=='function'then pcall(collectgarbage)else collectgarbage()end end "
         f"{flattened_reg} "
         f"{filler_22k}"
         f"{vm_prot} "
@@ -855,16 +964,20 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("input")
+    ap.add_argument("input", nargs="?")
     ap.add_argument("-o", "--output", default="obfuscated.lua")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--repeat-22k", type=int, default=2)
+    ap.add_argument("--heartbeat-demo", action="store_true")
 
     args, _ = ap.parse_known_args()
 
     try:
-        with open(args.input, encoding="utf-8") as f:
-            src = f.read()
+        if args.heartbeat_demo or not args.input:
+            src = HEARTBEAT_TEMPLATE
+        else:
+            with open(args.input, encoding="utf-8") as f:
+                src = f.read()
         out = obfuscate(src, seed=args.seed, repeat_22k=args.repeat_22k)
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(out)
