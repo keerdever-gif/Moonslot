@@ -5,7 +5,7 @@ import argparse
 HEADER = '''--[[ This code is protected by moonslot 1.02.1 if you want protect your code whit real obfuscation go to https://discord.gg/ZMnTeuTZ5
 ]]\n'''
 
-ANCHOR_SYMBOLS = list("@#€_&-+()/*:;!?")
+ANCHOR_SYMBOLS = list("@#$%&*+-=!?~^<>|/\\:;")
 _BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
 OPCODE_VARS = ["dr", "mn", "et", "gh", "ty", "ui", "op", "vu", "bn", "jg", "ka", "yh"]
 POOL_COUNT = 8
@@ -34,13 +34,13 @@ def _str_from_bytes(s: str) -> str:
 
 
 def ascii_obfuscate(s: str) -> str:
-    """Ofusca una cadena mediante codigos ASCII y expresiones aritmeticas simples."""
+    """Ofusca una cadena mediante codigos ASCII, expresiones aritmeticas y XOR."""
     raw = s.encode("utf-8")
     if not raw:
         return "''"
     parts = []
     for b in raw:
-        mode = random.randint(0, 2)
+        mode = random.randint(0, 3)
         if mode == 0:
             d = random.randint(1, 35)
             parts.append(f"({b + d}-{d})")
@@ -49,13 +49,52 @@ def ascii_obfuscate(s: str) -> str:
             rem = b % k
             q = b // k
             parts.append(f"({q}*{k}+{rem})" if rem else f"({q}*{k})")
+        elif mode == 2:
+            x = random.randint(1, 90)
+            parts.append(f"(_bx({b ^ x},{x}))")
         else:
-            parts.append(str(b))
+            d1 = random.randint(1, 15)
+            d2 = random.randint(1, 15)
+            parts.append(f"({b + d1 + d2}-{d1}-{d2})")
     return f"string.char({','.join(parts)})"
 
 
+def fragmented_ascii_obfuscate(s: str) -> str:
+    """Genera una cadena ASCII fragmentada protegida con validaciones seguras."""
+    raw = s.encode("utf-8")
+    if not raw:
+        return "''"
+    c_fn = randomName()
+    cat_fn = randomName()
+    chunks = []
+    for b in raw:
+        mode = random.randint(0, 3)
+        if mode == 0:
+            d = random.randint(1, 35)
+            expr = f"({b + d}-{d})"
+        elif mode == 1 and b >= 4:
+            k = random.randint(2, 4)
+            rem = b % k
+            q = b // k
+            expr = f"({q}*{k}+{rem})" if rem else f"({q}*{k})"
+        elif mode == 2:
+            x = random.randint(1, 90)
+            expr = f"(_bx({b ^ x},{x}))"
+        else:
+            d1 = random.randint(1, 15)
+            d2 = random.randint(1, 15)
+            expr = f"({b + d1 + d2}-{d1}-{d2})"
+        chunks.append(f"{c_fn}({expr})")
+
+    return (
+        f"(function()local {c_fn}=(type(string)=='table'and type(string.char)=='function')and string.char or function()return''end "
+        f"local {cat_fn}=(type(table)=='table'and type(table.concat)=='function')and table.concat or function(t)local o=''for _,v in ipairs(t)do o=o..tostring(v or '')end return o end "
+        f"return {cat_fn}({{{','.join(chunks)}}})end)()"
+    )
+
+
 def generate_pool_tag() -> str:
-    suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(5))
+    suffix = "".join(random.choice(ANCHOR_SYMBOLS) for _ in range(6))
     return f"[pool.a.d.d.{suffix}]"
 
 
@@ -288,7 +327,7 @@ def build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn,
 
 
 def build_anti_tamper_core(pool_list_lua: str) -> str:
-    """Anti-env logger y anti-tamper con detecciones reforzadas y corte efectivo."""
+    """Anti-env logger y anti-tamper reforzado con detecciones ampliadas y corte limpio."""
     f_flag = randomName()
     f_pools = randomName()
     f_root = randomName()
@@ -303,15 +342,15 @@ def build_anti_tamper_core(pool_list_lua: str) -> str:
     chk_env_funs = randomName()
     chk_timing = randomName()
 
-    s_hook_pat = ascii_obfuscate("^function: 0x0000")
+    s_hook_pat = fragmented_ascii_obfuscate("^function: 0x0000")
     s_info_mode = ascii_obfuscate("u")
-    s_c_a = ascii_obfuscate("cat")
-    s_c_b = ascii_obfuscate("dog")
+    s_c_a = fragmented_ascii_obfuscate("cat")
+    s_c_b = fragmented_ascii_obfuscate("dog")
     s_math_k = ascii_obfuscate("math")
-    s_env_ok = ascii_obfuscate("env_ok")
+    s_env_ok = fragmented_ascii_obfuscate("env_ok")
     s_env_k = ascii_obfuscate("env")
     s_val_k = ascii_obfuscate("val")
-    s_junk = ascii_obfuscate("x9z_corrupt")
+    s_junk = fragmented_ascii_obfuscate("x9z_corrupt")
 
     return f"""
 local {f_flag} = false
@@ -405,18 +444,13 @@ end
 
 local function {chk_hooks_dbg}()
     if {f_flag} then return end
-    if type(print) == "function" and type(tostring) == "function" then
-        local _okP, ps = {f_safe}(tostring, print)
-        if _okP and type(ps) == "string" and ps:match({s_hook_pat}) then
-            {f_corrupt}()
-            return
-        end
-    end
-    if type(loadstring) == "function" and type(tostring) == "function" then
-        local _okL, ls = {f_safe}(tostring, loadstring)
-        if _okL and type(ls) == "string" and ls:match({s_hook_pat}) then
-            {f_corrupt}()
-            return
+    for _, fnRef in ipairs({{print, warn, error, loadstring, load}}) do
+        if type(fnRef) == "function" and type(tostring) == "function" then
+            local _okS, sVal = {f_safe}(tostring, fnRef)
+            if _okS and type(sVal) == "string" and sVal:match({s_hook_pat}) then
+                {f_corrupt}()
+                return
+            end
         end
     end
     if type(debug) == "table" and type(debug.gethook) == "function" then
@@ -730,7 +764,7 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfus
             decoded = _decode_lua_string_literal(val)
             if decoded is not None and 0 < len(decoded) <= 128:
                 if len(decoded) <= 12:
-                    out.append(ascii_obfuscate(decoded))
+                    out.append(fragmented_ascii_obfuscate(decoded))
                 else:
                     out.append(encode_lua_string(decoded))
                 continue
@@ -750,34 +784,6 @@ def obfuscate_strings_and_numbers(code: str, encrypt_strings: bool = True, obfus
         else:
             out.append(val)
     return "".join(out)
-
-
-def add_extra_obfuscation_layer(code: str) -> str:
-    """Capa adicional de dispersion por fragmentos en tabla con reensamblado diferido."""
-    if not code:
-        return code
-    tbl_var = randomName()
-    idx_var = randomName()
-    out_var = randomName()
-    step = 36
-    chunks = [code[i:i + step] for i in range(0, len(code), step)]
-    order = list(range(len(chunks)))
-    random.shuffle(order)
-
-    entries = [f"[{i + 1}]={lua_quote(chunks[i])}" for i in range(len(chunks))]
-    seq_lua = ",".join(str(x + 1) for x in order)
-
-    return (
-        f"local {tbl_var}={{{','.join(entries)}}} "
-        f"local {out_var}={{}} "
-        f"for _,{idx_var} in ipairs({{{seq_lua}}})do "
-        f"if type({tbl_var}[{idx_var}])=='string' then {out_var}[{idx_var}]={tbl_var}[{idx_var}] end "
-        f"end "
-        f"local _assembled=table.concat({out_var}) "
-        f"{tbl_var}=nil {out_var}=nil "
-        f"local _fn=(type(loadstring)=='function' and loadstring)or(type(load)=='function' and load)or nil "
-        f"if type(_fn)=='function' then local _ok,_c=pcall(_fn,_assembled) if _ok and type(_c)=='function' then pcall(_c) end end "
-    )
 
 
 def minify_payload(code: str) -> str:
@@ -834,7 +840,7 @@ def flatten_control_flow(statements: list[str], v_t) -> str:
 
 
 def getExtraProtections(pool_tags) -> str:
-    s_mt = ascii_obfuscate("locked")
+    s_mt = fragmented_ascii_obfuscate("locked")
     s_chk = ascii_obfuscate("a")
     checks = "\n".join(
         f'    if type(getgenv) == "function" then local _okG,_gvG = pcall(getgenv) if _okG and type(_gvG) == "table" and _gvG[{lua_quote(tag)}] ~= true and (type(_G) ~= "table" or _G[{lua_quote(tag)}] ~= true) then return end end'
@@ -1052,7 +1058,6 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     obfuscated_user_code = obfuscate_strings_and_numbers(
         obfuscated_user_code, encrypt_strings=True, obfuscate_nums=True
     )
-    layered_user_code = minify_payload(add_extra_obfuscation_layer(obfuscated_user_code))
 
     bootstrap = build_bootstrap_helpers(v_t, v_bx, v_ch, v_by, v_rp, v_tc, v_ti, v_fl, v_rn, v_rt, v_dt)
     at_core = minify_payload(build_anti_tamper_core(pool_list_lua))
@@ -1066,7 +1071,7 @@ def obfuscate(sourceCode: str, seed: int = 0, repeat_22k: int = 2) -> str:
     flattened_reg = flatten_control_flow(reg_statements, v_t)
 
     vm_prot = buildVMBlock(extra_prots + " " + at_core, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
-    vm_user = buildVMBlock(layered_user_code, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
+    vm_user = buildVMBlock(obfuscated_user_code, pool_tags, v_t, v_ch, v_tc, v_ti, v_rt)
 
     mc_var = randomName()
     final_code = (
